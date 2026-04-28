@@ -1,3 +1,37 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_etudiant = $_SESSION['user_id'];
+
+// 1. Récupération des statistiques
+$sql_stats = "SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN statut_candidature = 'en_attente' THEN 1 ELSE 0 END) as en_attente,
+    SUM(CASE WHEN statut_candidature = 'acceptee' THEN 1 ELSE 0 END) as acceptees
+    FROM CANDIDATURE WHERE id_etudiant = ?";
+$stmt_stats = $pdo->prepare($sql_stats);
+$stmt_stats->execute([$id_etudiant]);
+$stats = $stmt_stats->fetch();
+
+// 2. Liste des candidatures avec jointures
+$sql_list = "SELECT c.*, o.titre, u.nom_complet as entreprise, e.siege_social 
+             FROM CANDIDATURE c
+             JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+             JOIN UTILISATEUR u ON o.id_entreprise = u.id_user
+             LEFT JOIN ENTREPRISE e ON u.id_user = e.id_user
+             WHERE c.id_etudiant = ?
+             ORDER BY c.date_postulation DESC";
+$stmt_list = $pdo->prepare($sql_list);
+$stmt_list->execute([$id_etudiant]);
+$candidatures = $stmt_list->fetchAll();
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -6,6 +40,7 @@
     <title>Mes Candidatures | STAGES HELLO</title>
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
@@ -185,86 +220,78 @@
         <div class="col-md-3">
             <div class="stat-mini-card">
                 <div class="text-primary"><i class="fa-solid fa-paper-plane fa-lg"></i></div>
-                <div><h6 class="mb-0 fw-800">03</h6><small class="text-muted">Total</small></div>
+                <div><h6 class="mb-0 fw-800"><?= sprintf("%02d", $stats['total']) ?></h6><small class="text-muted">Total</small></div>
             </div>
         </div>
         <div class="col-md-3">
             <div class="stat-mini-card">
                 <div class="text-warning"><i class="fa-solid fa-clock fa-lg"></i></div>
-                <div><h6 class="mb-0 fw-800">01</h6><small class="text-muted">En attente</small></div>
+                <div><h6 class="mb-0 fw-800"><?= sprintf("%02d", $stats['en_attente']) ?></h6><small class="text-muted">En attente</small></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-mini-card">
+                <div class="text-success"><i class="fa-solid fa-check-circle fa-lg"></i></div>
+                <div><h6 class="mb-0 fw-800"><?= sprintf("%02d", $stats['acceptees']) ?></h6><small class="text-muted">Acceptées</small></div>
             </div>
         </div>
     </div>
 
     <div class="row">
         <div class="col-xl-10">
-            
-            <div class="card-candidature" data-aos="fade-right" data-aos-delay="100">
-                <div class="d-flex align-items-center flex-wrap gap-4">
-                    <div class="company-logo-placeholder">TS</div>
-                    
-                    <div class="flex-grow-1">
-                        <h5 class="fw-bold mb-1">Développeur Web Full Stack</h5>
-                        <p class="text-muted small mb-0"><i class="fa-solid fa-location-dot me-1"></i> Tech Solutions • Douala</p>
-                    </div>
+            <?php if (count($candidatures) > 0): ?>
+                <?php foreach ($candidatures as $index => $cand): 
+                    // Gestion des classes de couleur selon le statut
+                    $status_class = [
+                        'en_attente' => 'status-attente',
+                        'acceptee'   => 'status-accepte',
+                        'refusee'    => 'status-refuse'
+                    ];
+                    $dot_color = [
+                        'en_attente' => 'text-warning',
+                        'acceptee'   => 'text-success',
+                        'refusee'    => 'text-danger'
+                    ];
+                    $initials = strtoupper(substr($cand['entreprise'], 0, 2));
+                ?>
+                
+                <div class="card-candidature" data-aos="fade-right" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                    <div class="d-flex align-items-center flex-wrap gap-4">
+                        <div class="company-logo-placeholder"><?= $initials ?></div>
+                        
+                        <div class="flex-grow-1">
+                            <h5 class="fw-bold mb-1"><?= htmlspecialchars($cand['titre']) ?></h5>
+                            <p class="text-muted small mb-0">
+                                <i class="fa-solid fa-location-dot me-1"></i> 
+                                <?= htmlspecialchars($cand['entreprise']) ?> • <?= htmlspecialchars($cand['siege_social'] ?? 'Douala') ?>
+                            </p>
+                        </div>
 
-                    <div>
-                        <span class="badge-status status-attente"><i class="fa-solid fa-circle text-warning small"></i> En attente</span>
-                    </div>
+                        <div>
+                            <span class="badge-status <?= $status_class[$cand['statut_candidature']] ?>">
+                                <i class="fa-solid fa-circle <?= $dot_color[$cand['statut_candidature']] ?> small"></i> 
+                                <?= ucfirst(str_replace('_', ' ', $cand['statut_candidature'])) ?>
+                            </span>
+                        </div>
 
-                    <div class="text-end" style="min-width: 120px;">
-                        <small class="text-muted d-block">Postulé le</small>
-                        <span class="fw-600">20 Avril 2026</span>
-                    </div>
+                        <div class="text-end" style="min-width: 120px;">
+                            <small class="text-muted d-block">Postulé le</small>
+                            <span class="fw-600"><?= date('d M Y', strtotime($cand['date_postulation'])) ?></span>
+                        </div>
 
-                    <button class="btn-view"><i class="fa-solid fa-eye me-2"></i>Détails</button>
+                        <button class="btn-view" 
+        onclick="afficherDetails(<?= htmlspecialchars(json_encode($cand)) ?>)">
+    <i class="fa-solid fa-eye me-2"></i>Détails
+</button>
+                    </div>
                 </div>
-            </div>
-
-            <div class="card-candidature" data-aos="fade-right" data-aos-delay="200">
-                <div class="d-flex align-items-center flex-wrap gap-4">
-                    <div class="company-logo-placeholder" style="color:var(--accent-green)">DC</div>
-                    
-                    <div class="flex-grow-1">
-                        <h5 class="fw-bold mb-1">Data Analyst</h5>
-                        <p class="text-muted small mb-0"><i class="fa-solid fa-location-dot me-1"></i> Data Corp • Yaoundé</p>
-                    </div>
-
-                    <div>
-                        <span class="badge-status status-accepte"><i class="fa-solid fa-circle text-success small"></i> Acceptée</span>
-                    </div>
-
-                    <div class="text-end" style="min-width: 120px;">
-                        <small class="text-muted d-block">Postulé le</small>
-                        <span class="fw-600">18 Avril 2026</span>
-                    </div>
-
-                    <button class="btn-view"><i class="fa-solid fa-eye me-2"></i>Détails</button>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <div class="text-center py-5">
+                    <p class="text-muted">Vous n'avez pas encore postulé à des offres.</p>
+                    <a href="listeStage.php" class="btn btn-primary rounded-pill">Explorer les offres</a>
                 </div>
-            </div>
-
-            <div class="card-candidature" data-aos="fade-right" data-aos-delay="300">
-                <div class="d-flex align-items-center flex-wrap gap-4">
-                    <div class="company-logo-placeholder" style="color:var(--accent-red)">CS</div>
-                    
-                    <div class="flex-grow-1">
-                        <h5 class="fw-bold mb-1">Designer UI/UX</h5>
-                        <p class="text-muted small mb-0"><i class="fa-solid fa-location-dot me-1"></i> Creative Studio • Remote</p>
-                    </div>
-
-                    <div>
-                        <span class="badge-status status-refuse"><i class="fa-solid fa-circle text-danger small"></i> Refusée</span>
-                    </div>
-
-                    <div class="text-end" style="min-width: 120px;">
-                        <small class="text-muted d-block">Postulé le</small>
-                        <span class="fw-600">15 Avril 2026</span>
-                    </div>
-
-                    <button class="btn-view"><i class="fa-solid fa-eye me-2"></i>Détails</button>
-                </div>
-            </div>
-
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -272,7 +299,70 @@
 <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
 <script>
     AOS.init({ duration: 800, once: true });
+    function afficherDetails(data) {
+    const modalBody = document.getElementById('modalContent');
+    const modalTitre = document.getElementById('modalTitre');
+    
+    // On met à jour le titre
+    modalTitre.innerText = data.titre;
+
+    // On prépare le contenu HTML
+    let html = `
+        <div class="mb-3">
+            <label class="text-muted small fw-bold uppercase">ENTREPRISE</label>
+            <p class="mb-0 text-primary fw-bold">${data.entreprise}</p>
+        </div>
+        <div class="mb-3">
+            <label class="text-muted small fw-bold uppercase">LIEU / SIÈGE</label>
+            <p class="mb-0">${data.siege_social || 'Non spécifié'}</p>
+        </div>
+        <div class="mb-3">
+            <label class="text-muted small fw-bold uppercase">DESCRIPTION DU POSTE</label>
+            <p class="small" style="text-align: justify; color: #cbd5e1;">
+                ${data.description ? data.description : 'Aucune description détaillée disponible.'}
+            </p>
+        </div>
+        <hr class="border-secondary">
+        <div class="d-flex justify-content-between align-items-center mt-3">
+            <div>
+                <label class="text-muted small d-block">STATUT ACTUEL</label>
+                <span class="badge rounded-pill bg-opacity-10 bg-info text-info p-2 px-3">
+                    ${data.statut_candidature.replace('_', ' ')}
+                </span>
+            </div>
+            <div class="text-end">
+                <label class="text-muted small d-block">POSTULÉ LE</label>
+                <span class="fw-bold">${new Date(data.date_postulation).toLocaleDateString('fr-FR')}</span>
+            </div>
+        </div>
+    `;
+
+    // On injecte et on affiche la modale
+    modalBody.innerHTML = html;
+    var myModal = new bootstrap.Modal(document.getElementById('detailsModal'));
+    myModal.show();
+}
 </script>
 
 </body>
+
+<div class="modal fade" id="detailsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary text-white">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold" id="modalTitre">Détails de l'offre</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modalContent">
+                <div class="text-center p-4">
+                    <i class="fa-solid fa-spinner fa-spin fa-2x text-primary"></i>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary rounded-pill" data-bs-dismiss="modal">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 </html>

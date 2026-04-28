@@ -1,3 +1,43 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_ent = $_SESSION['user_id'];
+
+// --- TRAITEMENT DES ACTIONS (Accepter / Refuser) ---
+if (isset($_GET['action']) && isset($_GET['id_cand'])) {
+    $nouveau_statut = ($_GET['action'] === 'accepter') ? 'acceptee' : 'refusee';
+    
+    $sql = "UPDATE CANDIDATURE SET statut_candidature = ? 
+            WHERE id_candidature = ? AND id_offre IN (SELECT id_offre FROM OFFRE_STAGE WHERE id_entreprise = ?)";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$nouveau_statut, $_GET['id_cand'], $id_ent]);
+    
+    header('Location: gestionCandidatures.php?msg=success');
+    exit();
+}
+
+// --- RÉCUPÉRATION DES CANDIDATURES ---
+// On joint l'étudiant (UTILISATEUR) et l'offre (OFFRE_STAGE)
+$sql = "SELECT c.*, u.nom_complet, u.email, o.titre as titre_offre 
+        FROM CANDIDATURE c
+        JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
+        JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+        WHERE o.id_entreprise = ?
+        ORDER BY c.date_postulation DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$id_ent]);
+$candidatures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$total_candidats = count($candidatures);
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -198,7 +238,12 @@
         <a href="OffrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link active"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="#" class="nav-link text-danger"><i class="fa-solid fa-power-off"></i> Déconnexion</a>
+         <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
+        <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
+<a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Déconnexion</span>
+</a>    
     </nav>
 </div>
 
@@ -232,71 +277,85 @@
                         <th class="text-end">Actions rapides</th>
                     </tr>
                 </thead>
-                <tbody>
+               <tbody>
+    <?php if (empty($candidatures)): ?>
+        <tr>
+            <td colspan="5" class="text-center py-4 text-muted">Aucune candidature reçue pour le moment.</td>
+        </tr>
+    <?php else: ?>
+        <?php foreach ($candidatures as $c): 
+            // Extraction des initiales (ex: Jean Paul -> JP)
+            $mots = explode(" ", $c['nom_complet']);
+            $initiales = strtoupper(substr($mots[0], 0, 1) . (isset($mots[1]) ? substr($mots[1], 0, 1) : ""));
+            
+          
+$status_color = 'var(--warning)';
+$status_text = 'En attente';
 
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="avatar">JP</div>
-                                <div>
-                                    <div class="candidate-name">Jean Paul</div>
-                                    <div class="candidate-sub">j.paul@example.com</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <span class="badge bg-dark border border-secondary fw-normal">Développeur Web</span>
-                        </td>
-                        <td>
-                            <div class="fw-500">20/04/2026</div>
-                            <div class="candidate-sub">Il y a 4 jours</div>
-                        </td>
-                        <td>
-                            <div class="status-pill" style="color: var(--warning);">
-                                <div class="dot" style="background: var(--warning);"></div> En attente
-                            </div>
-                        </td>
-                        <td>
-                            <div class="btn-action-group justify-content-end">
-                                <button class="btn-circle btn-view" title="Consulter le profil"><i class="fa-solid fa-eye"></i></button>
-                                <button class="btn-circle btn-accept" title="Accepter"><i class="fa-solid fa-check"></i></button>
-                                <button class="btn-circle btn-reject" title="Refuser"><i class="fa-solid fa-xmark"></i></button>
-                            </div>
-                        </td>
-                    </tr>
+if ($c['statut_candidature'] === 'acceptee') { 
+    $status_color = 'var(--success)'; 
+    $status_text = 'Acceptée'; 
+} elseif ($c['statut_candidature'] === 'refusee') { 
+    $status_color = 'var(--danger)'; 
+    $status_text = 'Refusée'; 
+}
+// Si c'est 'en_attente' (valeur par défaut), il garde les valeurs initiales (warning)
+        ?>
+        <tr>
+            <td>
+                <div class="d-flex align-items-center">
+                    <div class="avatar" style="<?= $c['statut_candidature'] == 'acceptee' ? 'background: linear-gradient(135deg, #10b981, #059669);' : '' ?>">
+                        <?= $initiales ?>
+                    </div>
+                    <div>
+                        <div class="candidate-name"><?= htmlspecialchars($c['nom_complet']) ?></div>
+                        <div class="candidate-sub"><?= htmlspecialchars($c['email']) ?></div>
+                    </div>
+                </div>
+            </td>
+            <td>
+                <span class="badge bg-dark border border-secondary fw-normal"><?= htmlspecialchars($c['titre_offre']) ?></span>
+            </td>
+            <td>
+    <div class="fw-500"><?= date('d/m/Y', strtotime($c['date_postulation'])) ?></div>
+    <div class="candidate-sub">
+        <?php 
+            $date = new DateTime($c['date_postulation']); // <-- Correction ici
+            $now = new DateTime();
+            $diff = $now->diff($date);
+            echo ($diff->days == 0) ? "Aujourd'hui" : "Il y a " . $diff->days . " jours";
+        ?>
+    </div>
+</td>
+            <td>
+                <div class="status-pill" style="color: <?= $status_color ?>;">
+                    <div class="dot" style="background: <?= $status_color ?>;"></div> <?= $status_text ?>
+                </div>
+            </td>
+            <td>
+                <div class="btn-action-group justify-content-end">
+                    <a href="profilEtudiant.php?id=<?= $c['id_etudiant'] ?>" class="btn-circle btn-view" title="Consulter le profil">
+                        <i class="fa-solid fa-eye"></i>
+                    </a>
 
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="avatar" style="background: linear-gradient(135deg, #10b981, #059669);">AN</div>
-                                <div>
-                                    <div class="candidate-name">Alice N.</div>
-                                    <div class="candidate-sub">a.ngono@example.com</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <span class="badge bg-dark border border-secondary fw-normal">Data Analyst</span>
-                        </td>
-                        <td>
-                            <div class="fw-500">21/04/2026</div>
-                            <div class="candidate-sub">Il y a 3 jours</div>
-                        </td>
-                        <td>
-                            <div class="status-pill" style="color: var(--success);">
-                                <div class="dot" style="background: var(--success);"></div> Acceptée
-                            </div>
-                        </td>
-                        <td>
-                            <div class="btn-action-group justify-content-end">
-                                <button class="btn-circle btn-view" title="Consulter le profil"><i class="fa-solid fa-eye"></i></button>
-                                <button class="btn-circle btn-accept" disabled><i class="fa-solid fa-check"></i></button>
-                                <button class="btn-circle btn-reject" title="Refuser"><i class="fa-solid fa-xmark"></i></button>
-                            </div>
-                        </td>
-                    </tr>
+                    <a href="gestionCandidatures.php?action=accepter&id_cand=<?= $c['id_candidature'] ?>" 
+                       class="btn-circle btn-accept <?= $c['statut_candidature'] == 'acceptee' ? 'disabled' : '' ?>" 
+                       title="Accepter">
+                        <i class="fa-solid fa-check"></i>
+                    </a>
 
-                </tbody>
+                    <a href="gestionCandidatures.php?action=refuser&id_cand=<?= $c['id_candidature'] ?>" 
+                       class="btn-circle btn-reject <?= $c['statut_candidature'] == 'refusee' ? 'disabled' : '' ?>" 
+                       onclick="return confirm('Refuser cette candidature ?')"
+                       title="Refuser">
+                        <i class="fa-solid fa-xmark"></i>
+                    </a>
+                </div>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+    <?php endif; ?>
+</tbody>
             </table>
         </div>
     </div>

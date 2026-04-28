@@ -1,3 +1,44 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_ent = $_SESSION['user_id'];
+
+// 1. AUTOMATISATION DES STATUTS
+$pdo->query("UPDATE OFFRE_STAGE SET statut = 'fermee' WHERE date_limite < CURDATE() AND statut = 'ouverte'");
+
+// 2. SUPPRESSION
+if (isset($_GET['delete_id'])) {
+    $stmt = $pdo->prepare("DELETE FROM OFFRE_STAGE WHERE id_offre = ? AND id_entreprise = ?");
+    $stmt->execute([$_GET['delete_id'], $id_ent]);
+    header('Location: offrePub.php');
+    exit();
+}
+
+// 3. MODIFICATION
+if (isset($_POST['update_offre'])) {
+    $sql = "UPDATE OFFRE_STAGE SET titre=?, lieu=?, type_stage=?, duree=?, date_limite=?, description=? WHERE id_offre=? AND id_entreprise=?";
+    $pdo->prepare($sql)->execute([
+        $_POST['titre'], $_POST['lieu'], $_POST['type_stage'], 
+        $_POST['duree'], $_POST['date_limite'], $_POST['description'], 
+        $_POST['id_offre'], $id_ent
+    ]);
+    header('Location: offrePub.php');
+    exit();
+}
+
+// 4. RÉCUPÉRATION UNIQUE (On utilise une seule variable propre)
+$stmt = $pdo->prepare("SELECT * FROM OFFRE_STAGE WHERE id_entreprise = ? ORDER BY date_limite DESC");
+$stmt->execute([$id_ent]);
+$liste_offres = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$total_offres = count($liste_offres);
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -6,6 +47,7 @@
     <title>Mes offres publiées | Espace Entreprise</title>
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
@@ -149,6 +191,28 @@
 
         .text-info-small { font-size: 0.8rem; color: var(--text-muted); }
 
+       .row-highlight {
+    background-color: #e0f2fe !important; /* Un bleu ciel très doux qui ressort sur le blanc */
+    transition: all 0.3s ease-in-out;
+    transform: scale(1.01); /* Légère prise de volume */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); /* Ombre portée pour décoller la ligne du fond */
+    position: relative;
+    z-index: 5;
+}
+
+.row-highlight td {
+    font-weight: 900 !important;   /* Texte très épais */
+    color: #1e3a8a !important;     /* Bleu marine très foncé (presque noir) pour contraster avec le bleu ciel */
+    font-size: 1.05rem;            /* On grossit un peu les lettres */
+    border-bottom: 2px solid #3b82f6 !important; /* Soulignement bleu vif */
+}
+
+/* On fait ressortir l'icône de l'œil sur la ligne active */
+.row-highlight .btn-view {
+    background-color: #3b82f6 !important;
+    color: white !important;
+    transform: scale(1.1);
+}
     </style>
 </head>
 <body>
@@ -164,8 +228,13 @@
         <a href="OffrePub.php" class="nav-link active"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="#" class="nav-link text-danger"><i class="fa-solid fa-power-off"></i> Déconnexion</a>
-    </nav>
+
+         <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
+        <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
+<a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Déconnexion</span>
+</a>    </nav>
 </div>
 
 <div class="main">
@@ -173,12 +242,14 @@
     <div class="header-box">
         <div>
             <h2 class="fw-bold mb-1">Mes offres publiées</h2>
-            <p class="text-muted mb-0">Total : <span class="text-white fw-bold">12 offres</span> enregistrées</p>
+            <p class="text-muted mb-0">Total :</p> <span class="text-white fw-bold">
+        <?= $total_offres; ?> offre<?= ($total_offres > 1) ? 's' : ''; ?>
+    </span> enregistrée<?= ($total_offres > 1) ? 's' : ''; ?>
         </div>
 
-        <button class="btn-add">
+       <a href="pubOffre.php" class="btn-add text-decoration-none">
             <i class="fa-solid fa-plus me-2"></i> Nouvelle offre
-        </button>
+        </a>
     </div>
 
     <div class="card-table">
@@ -194,66 +265,59 @@
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+               <tbody>
+    <?php if (empty($liste_offres)): ?>
+        <tr>
+            <td colspan="6" class="text-center py-4 text-muted">Aucune offre publiée pour le moment.</td>
+        </tr>
+    <?php else: ?>
+        <?php foreach ($liste_offres as $offre): 
+            $date_limite = new DateTime($offre['date_limite']);
+            $aujourdhui = new DateTime(date('Y-m-d'));
+            $interval = $aujourdhui->diff($date_limite);
+            $expiree = ($date_limite < $aujourdhui);
+        ?>
+        <tr>
+            <td>
+                <div class="fw-bold"><?= htmlspecialchars($offre['titre']) ?></div>
+                <div class="text-info-small">
+                    <i class="fa-solid fa-location-dot me-1"></i> <?= htmlspecialchars($offre['lieu']) ?>
+                </div>
+            </td>
+            <td><span class="badge bg-dark border border-secondary"><?= htmlspecialchars($offre['type_stage']) ?></span></td>
+            <td><?= htmlspecialchars($offre['duree']) ?></td>
+            <td>
+                <div class="fw-600"><?= date('d/m/Y', strtotime($offre['date_limite'])) ?></div>
+                <div class="text-info-small <?= $expiree ? 'text-danger' : '' ?>">
+                    <?= $expiree ? "Expiré" : "Dans " . $interval->days . " jours"; ?>
+                </div>
+            </td>
+            <td>
+                <?php if ($offre['statut'] == 'ouverte'): ?>
+                    <span class="badge-status bg-success"><i class="fa-solid fa-check-circle me-1"></i> Active</span>
+                <?php else: ?>
+                    <span class="badge-status bg-danger text-white"><i class="fa-solid fa-clock me-1"></i> Terminée</span>
+                <?php endif; ?>
+            </td>
+            <td class="text-end">
+                <button class="btn-action btn-view" onclick="illuminerLigne(this)" title="Visualiser">
+    <i class="fa-solid fa-eye"></i>
+</button>
 
-                    <tr>
-                        <td>
-                            <div class="fw-bold">Développeur Web Full Stack</div>
-                            <div class="text-info-small"><i class="fa-solid fa-location-dot me-1"></i> Douala, Akwa</div>
-                        </td>
-                        <td><span class="badge bg-dark border border-secondary">Stage pro</span></td>
-                        <td>3 mois</td>
-                        <td>
-                            <div class="fw-600">30/05/2026</div>
-                            <div class="text-info-small">Dans 1 mois</div>
-                        </td>
-                        <td><span class="badge-status bg-success"><i class="fa-solid fa-check-circle me-1"></i> Active</span></td>
-                        <td class="text-end">
-                            <button class="btn-action btn-view" title="Voir les candidats"><i class="fa-solid fa-eye"></i></button>
-                            <button class="btn-action btn-edit" title="Modifier"><i class="fa-solid fa-pen"></i></button>
-                            <button class="btn-action btn-delete" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
+                <button class="btn-action btn-edit" onclick='ouvrirModification(<?= json_encode($offre); ?>)' title="Modifier">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
 
-                    <tr>
-                        <td>
-                            <div class="fw-bold">Data Analyst Junior</div>
-                            <div class="text-info-small"><i class="fa-solid fa-location-dot me-1"></i> Yaoundé, Centre</div>
-                        </td>
-                        <td><span class="badge bg-dark border border-secondary">Stage académique</span></td>
-                        <td>2 mois</td>
-                        <td>
-                            <div class="fw-600">15/05/2026</div>
-                            <div class="text-info-small text-danger">Expiré</div>
-                        </td>
-                        <td><span class="badge-status bg-danger text-white"><i class="fa-solid fa-clock me-1"></i> Terminée</span></td>
-                        <td class="text-end">
-                            <button class="btn-action btn-view" title="Voir les candidats"><i class="fa-solid fa-eye"></i></button>
-                            <button class="btn-action btn-edit" title="Modifier"><i class="fa-solid fa-pen"></i></button>
-                            <button class="btn-action btn-delete" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td>
-                            <div class="fw-bold">Assistant RH</div>
-                            <div class="text-info-small"><i class="fa-solid fa-location-dot me-1"></i> Douala, Bonanjo</div>
-                        </td>
-                        <td><span class="badge bg-dark border border-secondary">Stage pro</span></td>
-                        <td>6 mois</td>
-                        <td>
-                            <div class="fw-600">10/06/2026</div>
-                            <div class="text-info-small">Bientôt</div>
-                        </td>
-                        <td><span class="badge-status bg-warning text-dark"><i class="fa-solid fa-pause-circle me-1"></i> Brouillon</span></td>
-                        <td class="text-end">
-                            <button class="btn-action btn-view" title="Voir les candidats"><i class="fa-solid fa-eye"></i></button>
-                            <button class="btn-action btn-edit" title="Modifier"><i class="fa-solid fa-pen"></i></button>
-                            <button class="btn-action btn-delete" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
-
-                </tbody>
+                <a href="offrePub.php?delete_id=<?= $offre['id_offre'] ?>" 
+                   class="btn-action btn-delete" 
+                   onclick="return confirm('Supprimer cette offre ?')" title="Supprimer">
+                    <i class="fa-solid fa-trash"></i>
+                </a>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+    <?php endif; ?>
+</tbody>
             </table>
         </div>
     </div>
@@ -270,4 +334,86 @@
 </div>
 
 </body>
+
+<div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-white border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title">Modifier l'offre</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST">
+        <div class="modal-body">
+            <input type="hidden" name="id_offre" id="edit_id">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label>Titre</label>
+                    <input type="text" name="titre" id="edit_titre" class="form-control bg-dark text-white border-secondary">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label>Lieu</label>
+                    <input type="text" name="lieu" id="edit_lieu" class="form-control bg-dark text-white border-secondary">
+                </div>
+            </div>
+            <div class="mb-3">
+                <label>Description</label>
+                <textarea name="description" id="edit_desc" class="form-control bg-dark text-white border-secondary" rows="4"></textarea>
+            </div>
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label>Durée</label>
+                    <input type="text" name="duree" id="edit_duree" class="form-control bg-dark text-white border-secondary">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label>Type</label>
+                    <input type="text" name="type_stage" id="edit_type" class="form-control bg-dark text-white border-secondary">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label>Date Limite</label>
+                    <input type="date" name="date_limite" id="edit_date" class="form-control bg-dark text-white border-secondary">
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" name="update_offre" class="btn btn-primary">Enregistrer les modifications</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+function ouvrirModification(offre) {
+    // On remplit les champs du modal avec les données de l'offre
+    document.getElementById('edit_id').value = offre.id_offre;
+    document.getElementById('edit_titre').value = offre.titre;
+    document.getElementById('edit_lieu').value = offre.lieu;
+    document.getElementById('edit_desc').value = offre.description;
+    document.getElementById('edit_duree').value = offre.duree;
+    document.getElementById('edit_type').value = offre.type_stage;
+    document.getElementById('edit_date').value = offre.date_limite;
+
+    // On affiche le modal (Bootstrap)
+    var myModal = new bootstrap.Modal(document.getElementById('editModal'));
+    myModal.show();
+}
+
+function illuminerLigne(bouton) {
+    // 1. On récupère toutes les lignes du tableau
+    const toutesLesLignes = document.querySelectorAll('tbody tr');
+
+    // 2. On retire la classe d'illumination de toutes les lignes
+    toutesLesLignes.forEach(ligne => {
+        ligne.classList.remove('row-highlight');
+    });
+
+    // 3. On remonte du bouton vers la ligne parente (tr) et on lui ajoute la classe
+    const ligneActuelle = bouton.closest('tr');
+    ligneActuelle.classList.add('row-highlight');
+    
+    // Optionnel : Un petit message dans la console pour déboguer
+    console.log("Ligne sélectionnée avec succès !");
+}
+
+</script>
 </html>

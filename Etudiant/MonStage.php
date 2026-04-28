@@ -1,3 +1,53 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_etudiant = $_SESSION['user_id'];
+
+// --- NOUVEAU : On récupère les infos de la candidature dès le début ---
+$stmt_init = $pdo->prepare("SELECT * FROM CANDIDATURE WHERE id_etudiant = ? AND statut_candidature = 'acceptee' LIMIT 1");
+$stmt_init->execute([$id_etudiant]);
+$cand = $stmt_init->fetch(); // Maintenant $cand existe pour le HTML plus bas !
+
+// --- TRAITEMENT DE L'UPLOAD ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rapport'])) {
+    header('Content-Type: application/json');
+    
+    if (!$cand) {
+        echo json_encode(['status' => 'error', 'message' => 'Aucun stage accepté trouvé.']);
+        exit;
+    }
+
+    $file = $_FILES['rapport'];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    
+    if ($ext !== 'pdf') {
+        echo json_encode(['status' => 'error', 'message' => 'Seul le format PDF est autorisé.']);
+        exit;
+    }
+
+    $dest_folder = '../uploads/rapports/';
+    if (!is_dir($dest_folder)) mkdir($dest_folder, 0777, true);
+
+    $file_name = "rapport_" . $id_etudiant . "_" . time() . ".pdf";
+    $dest_path = $dest_folder . $file_name;
+
+    if (move_uploaded_file($file['tmp_name'], $dest_path)) {
+        $update = $pdo->prepare("UPDATE CANDIDATURE SET rapport_pdf = ? WHERE id_candidature = ?");
+        $update->execute([$file_name, $cand['id_candidature']]);
+        echo json_encode(['status' => 'success']);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Erreur lors du déplacement du fichier.']);
+    }
+    exit;
+}
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -190,6 +240,11 @@
         }
 
         input[type="file"] { display: none; }
+
+        .progress-container, .success-animation { display: none; }
+.drop-zone { cursor: pointer; transition: all 0.3s ease; border: 2px dashed rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; }
+.drop-zone:hover, .drop-zone.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.05); }
+#fileInput { display: none; } /* On cache l'input moche */
     </style>
 </head>
 <body>
@@ -224,6 +279,13 @@
                         <input type="file" id="fileInput" accept="application/pdf">
                         <div id="fileDisplay" class="mt-3 fw-bold text-primary"></div>
                     </label>
+                    <?php if (!empty($cand['rapport_pdf'])): ?>
+    <a href="telecharger_rapport.php?file=<?= $cand['rapport_pdf'] ?>" class="btn btn-outline-primary btn-sm rounded-pill">
+        <i class="fa-solid fa-download me-2"></i> Télécharger le rapport
+    </a>
+<?php else: ?>
+    <span class="text-muted small italic">Aucun rapport déposé</span>
+<?php endif; ?>
 
                     <div class="progress-container" id="progressContainer">
                         <div class="d-flex justify-content-between mb-2">
@@ -275,7 +337,7 @@
 
 <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
 <script>
-    AOS.init({ duration: 800, once: true });
+    AOS.init({ duration: 800 });
 
     const fileInput = document.getElementById('fileInput');
     const dropZone = document.getElementById('dropZone');
@@ -287,49 +349,49 @@
     const percentText = document.getElementById('percentText');
     const successArea = document.getElementById('successArea');
 
-    // Gestion du fichier
-    fileInput.addEventListener('change', handleFiles);
-    
-    function handleFiles() {
-        if(fileInput.files.length > 0) {
-            fileDisplay.innerHTML = `<i class="fa-solid fa-file-circle-check me-2"></i> ${fileInput.files[0].name}`;
+    fileInput.addEventListener('change', function() {
+        if (this.files[0]) {
+            fileDisplay.innerText = "Fichier : " + this.files[0].name;
             submitBtn.disabled = false;
-            dropZone.style.borderColor = "var(--accent-green)";
         }
-    }
+    });
 
-    // Simulation d'envoi innovante
-    uploadForm.addEventListener('submit', (e) => {
+    uploadForm.addEventListener('submit', function(e) {
         e.preventDefault();
         
-        submitBtn.style.display = 'none';
+        let formData = new FormData();
+        formData.append('rapport', fileInput.files[0]);
+
+        let xhr = new XMLHttpRequest();
         progressContainer.style.display = 'block';
-        
-        let width = 0;
-        const interval = setInterval(() => {
-            if (width >= 100) {
-                clearInterval(interval);
-                showSuccess();
-            } else {
-                width += 2;
-                progressBar.style.width = width + '%';
-                percentText.innerHTML = width + '%';
+        submitBtn.style.display = 'none';
+
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                let percent = Math.round((e.loaded / e.total) * 100);
+                progressBar.style.width = percent + '%';
+                percentText.innerText = percent + '%';
             }
-        }, 50);
-    });
+        });
 
-    function showSuccess() {
-        progressContainer.style.display = 'none';
-        dropZone.style.display = 'none';
-        successArea.style.display = 'block';
-    }
+        xhr.onload = function() {
+            try {
+                let response = JSON.parse(xhr.responseText);
+                if (response.status === 'success') {
+                    progressContainer.style.display = 'none';
+                    successArea.style.display = 'block';
+                } else {
+                    alert(response.message);
+                    submitBtn.style.display = 'block';
+                    progressContainer.style.display = 'none';
+                }
+            } catch(e) {
+                alert("Erreur de réponse du serveur.");
+            }
+        };
 
-    // Drag and Drop visual effects
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false);
-    });
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false);
+        xhr.open('POST', window.location.href, true);
+        xhr.send(formData);
     });
 </script>
 

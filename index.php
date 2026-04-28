@@ -268,11 +268,11 @@
 
         <div class="collapse navbar-collapse" id="navbarContent">
             <ul class="navbar-nav ms-auto align-items-center">
-                <li class="nav-item"><a class="nav-link px-3" href="#">Accueil</a></li>
+                <li class="nav-item"><a class="nav-link px-3" href="index.php">Accueil</a></li>
 <li class="nav-item"><a class="nav-link px-3" href="#offres">Nos Offres</a></li>
                 <li class="nav-item"><a class="nav-link px-3" href="#demo">Demo</a></li>
                 <li class="nav-item ms-lg-3">
-                    <a class="btn btn-outline-primary rounded-pill px-4" href="#">Connexion</a>
+                    <a class="btn btn-outline-primary rounded-pill px-4" href="Auth/connexion.php">Connexion</a>
                 </li>
             </ul>
         </div>
@@ -301,6 +301,16 @@
                 <p class="hero-text mx-auto" style="max-width: 600px;">Gérez vos candidatures et vos offres avec une simplicité déconcertante grâce à nos outils automatisés.</p>
                 <div class="hero-btn">
                     <a href="#" class="btn btn-premium btn-success text-white">Découvrir les outils</a>
+                </div>
+            </div>
+        </div>
+         <div class="carousel-item">
+            <img src="images/acc3.png" class="carousel-img" alt="Technologie">
+            <div class="carousel-caption-custom">
+                <h1 class="hero-title">Qualite  <br>et service <span class="text-success">Pro-Max</span></h1>
+                <p class="hero-text mx-auto" style="max-width: 600px;">rassurer que votre demande est notre objectif.</p>
+                <div class="hero-btn">
+                    <a href="#" class="btn btn-premium btn-success text-white">Découvrir les competences</a>
                 </div>
             </div>
         </div>

@@ -1,259 +1,259 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+// 1. Protection de l'accès
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_ent = $_SESSION['user_id'];
+$status_msg = "";
+
+// 2. Traitement des formulaires (POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    // MISE À JOUR DU PROFIL
+    if (isset($_POST['save_info'])) {
+        $nom = htmlspecialchars($_POST['nom_complet']);
+        $email = htmlspecialchars($_POST['email']);
+        $tel = htmlspecialchars($_POST['telephone']);
+        $adr = htmlspecialchars($_POST['adresse']);
+        $siege = htmlspecialchars($_POST['siege_social']);
+        
+        $sql = "UPDATE UTILISATEUR SET nom_complet = ?, email = ?, telephone = ?, adresse = ?, siege_social = ? WHERE id_user = ?";
+        $stmt = $pdo->prepare($sql);
+        
+        if ($stmt->execute([$nom, $email, $tel, $adr, $siege, $id_ent])) {
+            $_SESSION['user_name'] = $nom;
+            $status_msg = "<div class='alert alert-success border-0 shadow-sm animate__animated animate__fadeIn'>
+                            <i class='fa-solid fa-circle-check me-2'></i>Profil mis à jour avec succès !
+                          </div>";
+        } else {
+            $status_msg = "<div class='alert alert-danger border-0 shadow-sm'>Une erreur est survenue lors de la mise à jour.</div>";
+        }
+    }
+
+    // MISE À JOUR DU MOT DE PASSE
+    if (isset($_POST['save_password'])) {
+        $old_pass = $_POST['old_pass'];
+        $new_pass = $_POST['new_pass'];
+        $confirm_pass = $_POST['confirm_pass'];
+
+        if ($new_pass !== $confirm_pass) {
+            $status_msg = "<div class='alert alert-warning border-0 shadow-sm'>Les nouveaux mots de passe ne correspondent pas.</div>";
+        } else {
+            $stmt = $pdo->prepare("SELECT mot_de_passe FROM UTILISATEUR WHERE id_user = ?");
+            $stmt->execute([$id_ent]);
+            $user = $stmt->fetch();
+
+            if (password_verify($old_pass, $user['mot_de_passe'])) {
+                $hashed = password_hash($new_pass, PASSWORD_DEFAULT);
+                $update = $pdo->prepare("UPDATE UTILISATEUR SET mot_de_passe = ? WHERE id_user = ?");
+                $update->execute([$hashed, $id_ent]);
+                $status_msg = "<div class='alert alert-success border-0 shadow-sm'>Mot de passe modifié avec succès.</div>";
+            } else {
+                $status_msg = "<div class='alert alert-danger border-0 shadow-sm'>L'ancien mot de passe est incorrect.</div>";
+            }
+        }
+    }
+}
+
+// 3. Récupération des données fraîches
+$stmt = $pdo->prepare("SELECT * FROM UTILISATEUR WHERE id_user = ?");
+$stmt->execute([$id_ent]);
+$ent = $stmt->fetch();
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Publier une offre | Espace Entreprise</title>
-
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>Paramètres Entreprise - <?= htmlspecialchars($ent['nom_complet']) ?></title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
 
     <style>
         :root {
-            --bg-dark: #1a1d2d;
-            --sidebar-dark: #111422;
-            --card-dark: #23273a;
-            --input-bg: #1f2333;
-            --text-muted: #8a8d9a;
-            --accent: #3b82f6;
+            --primary-color: #6366f1;
+            --secondary-bg: #1e1e2d;
+            --input-focus: #2b2b40;
         }
-
-        body {
-            background-color: var(--bg-dark);
-            color: white;
-            font-family: 'Inter', sans-serif;
-            margin: 0;
-            display: flex;
-        }
-
-        /* SIDEBAR (Harmonisée) */
-        .sidebar {
-            width: 260px;
-            height: 100vh;
-            background-color: var(--sidebar-dark);
-            border-right: 1px solid #2d3142;
-            position: fixed;
-            padding: 20px 0;
-        }
-
-        .sidebar-brand {
-            padding: 0 25px 30px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--accent);
-            font-size: 1.1rem;
-        }
-
-        .nav-link {
-            color: var(--text-muted);
-            padding: 12px 25px;
-            display: flex;
-            align-items: center;
-            transition: 0.3s;
-            text-decoration: none;
-        }
-
-        .nav-link i { margin-right: 15px; width: 20px; text-align: center; }
         
-        .nav-link:hover, .nav-link.active {
-            background: rgba(59, 130, 246, 0.1);
-            color: white;
-            border-left: 4px solid var(--accent);
+        body { 
+            background-color: #0f172a; 
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
-        /* MAIN CONTENT */
-        .main {
-            margin-left: 260px;
-            padding: 40px;
-            width: calc(100% - 260px);
-        }
+        .main-content { padding: 50px 20px; }
 
-        .header-section {
-            margin-bottom: 35px;
-            border-left: 5px solid var(--accent);
-            padding-left: 20px;
-        }
-
-        /* FORM CARD */
-        .card-form {
-            background: var(--card-dark);
-            padding: 40px;
+        .custom-table-card {
+            background: var(--secondary-bg);
             border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-            border: 1px solid rgba(255,255,255,0.05);
+            padding: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
 
-        .form-label {
-            color: var(--text-muted);
-            font-weight: 500;
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 10px;
+        .section-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            border-left: 5px solid var(--primary-color);
+            padding-left: 15px;
+            margin-bottom: 30px;
         }
 
-        .form-control, .form-select {
-            background: var(--input-bg);
-            border: 1px solid rgba(255,255,255,0.1);
+        .form-control {
+            background-color: #161625;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             color: white;
             padding: 12px 15px;
-            border-radius: 10px;
-            transition: 0.3s;
+            transition: all 0.3s;
         }
 
-        .form-control:focus, .form-select:focus {
-            background: #252a3d;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+        .form-control:focus {
+            background-color: var(--input-focus);
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.25rem rgba(99, 102, 241, 0.25);
             color: white;
         }
 
-        .form-control::placeholder {
-            color: #555a70;
-        }
-
-        /* BUTTONS */
-        .btn-publish {
-            background: linear-gradient(135deg, var(--accent), #2563eb);
-            color: white;
-            padding: 12px 35px;
-            border: none;
-            border-radius: 10px;
+        .nav-pills .nav-link {
+            color: #94a3b8;
             font-weight: 600;
-            transition: 0.3s;
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
-        }
-
-        .btn-publish:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
-            color: white;
-        }
-
-        .btn-cancel {
-            background: transparent;
-            color: var(--text-muted);
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 12px 25px;
             border-radius: 10px;
             margin-right: 10px;
             transition: 0.3s;
         }
 
-        .btn-cancel:hover {
-            background: rgba(255,0,0,0.1);
-            color: #ff4d4d;
-            border-color: #ff4d4d;
+        .nav-pills .nav-link.active {
+            background-color: var(--primary-color);
+            color: white;
         }
 
-        /* PROGRESS ICON */
-        .step-icon {
-            width: 40px;
-            height: 40px;
-            background: rgba(59, 130, 246, 0.1);
-            color: var(--accent);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 20px;
+        .btn-save {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-weight: 600;
+            transition: transform 0.2s;
         }
 
+        .btn-save:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .danger-zone {
+            border: 1px dashed #ef4444;
+            background: rgba(239, 68, 68, 0.05);
+        }
     </style>
 </head>
 <body>
 
-<div class="sidebar">
-    <div class="sidebar-brand">
-        <i class="fa-solid fa-building me-2"></i> TECH SOLUTIONS
-    </div>
-    
-    <nav>
-        <a href="dashEnt.php" class="nav-link"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
-        <a href="pubOffre.php" class="nav-link active"><i class="fa-solid fa-plus-circle"></i> Publier une offre</a>
-        <a href="OffrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
-        <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
-        <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="#" class="nav-link text-danger"><i class="fa-solid fa-power-off"></i> Déconnexion</a>
-    </nav>
-</div>
-
-<div class="main">
-
-    <div class="header-section">
-        <h2 class="fw-bold mb-1">Publier une nouvelle offre</h2>
-        <p class="text-muted">Remplissez les informations ci-dessous pour attirer les meilleurs talents.</p>
-    </div>
-
-    <div class="card-form">
-        <div class="step-icon">
-            <i class="fa-solid fa-file-signature"></i>
+<div class="container main-content">
+    <div class="row">
+        <div class="col-lg-10 mx-auto text-center mb-5">
+            <h2 class="fw-bold">Configuration du Compte</h2>
+            <p class="text-muted">Personnalisez votre présence sur la plateforme et sécurisez vos accès.</p>
         </div>
-
-        <form method="POST" action="save_offre.php">
-
-            <div class="mb-4">
-                <label class="form-label"><i class="fa-solid fa-heading me-2"></i>Titre de l’offre</label>
-                <input type="text" name="titre" class="form-control" placeholder="Ex: Développeur Web Full Stack" required>
-            </div>
-
-            <div class="mb-4">
-                <label class="form-label"><i class="fa-solid fa-align-left me-2"></i>Description du poste</label>
-                <textarea name="description" class="form-control" rows="5" placeholder="Décrivez les missions, l'environnement de travail..." required></textarea>
-            </div>
-
-            <div class="row">
-                <div class="col-md-6 mb-4">
-                    <label class="form-label"><i class="fa-solid fa-tags me-2"></i>Compétences requises</label>
-                    <input type="text" name="competences" class="form-control" placeholder="ex: PHP, React, UI/UX Design">
-                </div>
-
-                <div class="col-md-6 mb-4">
-                    <label class="form-label"><i class="fa-solid fa-location-dot me-2"></i>Lieu du stage</label>
-                    <input type="text" name="lieu" class="form-control" placeholder="ex: Douala, Akwa">
-                </div>
-            </div>
-
-            <div class="row">
-                <div class="col-md-4 mb-4">
-                    <label class="form-label"><i class="fa-solid fa-briefcase me-2"></i>Type de stage</label>
-                    <select name="type_stage" class="form-select">
-                        <option>Stage académique</option>
-                        <option>Stage professionnel</option>
-                        <option>Stage pré-emploi</option>
-                    </select>
-                </div>
-
-                <div class="col-md-4 mb-4">
-                    <label class="form-label"><i class="fa-solid fa-calendar-day me-2"></i>Durée</label>
-                    <input type="text" name="duree" class="form-control" placeholder="ex: 3 à 6 mois">
-                </div>
-
-                <div class="col-md-4 mb-4">
-                    <label class="form-label"><i class="fa-solid fa-clock me-2"></i>Date limite de dépôt</label>
-                    <input type="date" name="date_limite" class="form-control">
-                </div>
-            </div>
-
-            <hr class="my-4" style="border-color: rgba(255,255,255,0.1);">
-
-            <div class="d-flex justify-content-end align-items-center">
-                <button type="button" class="btn btn-cancel">Annuler</button>
-                <button type="submit" class="btn-publish">
-                    <i class="fa-solid fa-cloud-arrow-up me-2"></i> Mettre en ligne l'offre
-                </button>
-            </div>
-
-        </form>
     </div>
 
-    <div class="text-center mt-4">
-        <small class="text-muted">Besoin d'aide ? Consultez notre <a href="#" class="text-primary text-decoration-none">guide de rédaction</a></small>
-    </div>
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <?= $status_msg ?>
 
+            <div class="custom-table-card mt-3">
+                <ul class="nav nav-pills mb-5 justify-content-center" id="pills-tab" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pills-profile"><i class="fa-solid fa-id-card me-2"></i>Profil Entreprise</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pills-security"><i class="fa-solid fa-shield-halved me-2"></i>Sécurité</button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="pills-tabContent">
+                    
+                    <div class="tab-pane fade show active" id="pills-profile">
+                        <h5 class="section-title">Informations Générales</h5>
+                        <form method="POST">
+                            <div class="row g-4">
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">NOM DE L'ÉTABLISSEMENT</label>
+                                    <input type="text" name="nom_complet" class="form-control" value="<?= htmlspecialchars($ent['nom_complet']) ?>" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">EMAIL PROFESSIONNEL</label>
+                                    <input type="email" name="email" class="form-control" value="<?= htmlspecialchars($ent['email']) ?>" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">TÉLÉPHONE</label>
+                                    <input type="text" name="telephone" class="form-control" value="<?= htmlspecialchars($ent['telephone'] ?? '') ?>" placeholder="+237 ...">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">SIÈGE SOCIAL (VILLE)</label>
+                                    <input type="text" name="siege_social" class="form-control" value="<?= htmlspecialchars($ent['siege_social'] ?? '') ?>" placeholder="Ex: Douala, Cameroun">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label text-muted small fw-bold">ADRESSE GÉOGRAPHIQUE</label>
+                                    <textarea name="adresse" class="form-control" rows="3" placeholder="Quartier, Rue, Immeuble..."><?= htmlspecialchars($ent['adresse'] ?? '') ?></textarea>
+                                </div>
+                                <div class="col-12 text-end mt-4">
+                                    <button type="submit" name="save_info" class="btn btn-save text-white">
+                                        <i class="fa-solid fa-check me-2"></i>Enregistrer les modifications
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="tab-pane fade" id="pills-security">
+                        <h5 class="section-title text-warning border-warning">Changer le mot de passe</h5>
+                        <form method="POST">
+                            <div class="mb-4">
+                                <label class="form-label text-muted small fw-bold">MOT DE PASSE ACTUEL</label>
+                                <input type="password" name="old_pass" class="form-control" required>
+                            </div>
+                            <div class="row g-4 mb-4">
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">NOUVEAU MOT DE PASSE</label>
+                                    <input type="password" name="new_pass" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">CONFIRMATION</label>
+                                    <input type="password" name="confirm_pass" class="form-control" required>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <button type="submit" name="save_password" class="btn btn-outline-warning rounded-pill px-5">
+                                    <i class="fa-solid fa-lock-open me-2"></i>Mettre à jour
+                                </button>
+                            </div>
+                        </form>
+
+                        <div class="danger-zone p-4 rounded-3 mt-5">
+                            <h6 class="text-danger fw-bold"><i class="fa-solid fa-circle-exclamation me-2"></i> Zone de danger</h6>
+                            <p class="text-muted small mb-3">La suppression de votre compte entraînera la perte définitive de toutes vos offres publiées et des candidatures associées.</p>
+                            <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Êtes-vous absolument sûr ? Cette action est irréversible.')">
+                                Supprimer mon compte entreprise
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

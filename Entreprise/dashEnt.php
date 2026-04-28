@@ -1,3 +1,47 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+// Protection de la page
+if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_ent = $_SESSION['user_id'];
+
+// --- 1. STATISTIQUES ---
+// Nombre d'offres publiées
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM OFFRE_STAGE WHERE id_entreprise = ?");
+$stmt->execute([$id_ent]);
+$nb_offres = $stmt->fetchColumn();
+
+// Nombre de candidatures reçues
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM CANDIDATURE c 
+                       JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre 
+                       WHERE o.id_entreprise = ?");
+$stmt->execute([$id_ent]);
+$nb_candidatures = $stmt->fetchColumn();
+
+// Nombre de stages en cours (candidatures acceptées)
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM CANDIDATURE c 
+                       JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre 
+                       WHERE o.id_entreprise = ? AND c.statut_candidature = 'acceptee'");
+$stmt->execute([$id_ent]);
+$nb_stages = $stmt->fetchColumn();
+
+// --- 2. LES 5 DERNIÈRES CANDIDATURES ---
+$sql = "SELECT c.*, u.nom_complet, o.titre as titre_offre 
+        FROM CANDIDATURE c
+        JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
+        JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+        WHERE o.id_entreprise = ?
+        ORDER BY c.date_postulation DESC LIMIT 5";
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$id_ent]);
+$dernieres_candidatures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -156,58 +200,58 @@
         <a href="pubOffre.php" class="nav-link "><i class="fa-solid fa-plus-circle"></i> Publier une offre</a>
         <a href="OffrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
-        <a href="#" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
+        <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="#" class="nav-link text-danger"><i class="fa-solid fa-power-off"></i> Déconnexion</a>
-    </nav>
+<a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Déconnexion</span>
+</a>    </nav>
 </div>
 
 <div class="main-content">
     <div class="d-flex justify-content-between align-items-center mb-5">
         <div>
-            <h2 class="fw-bold mb-1">Bienvenue Entreprise 👋</h2>
+            <h2 class="fw-bold mb-1">Bienvenue <?= htmlspecialchars($_SESSION['user_name'] ?? 'Entreprise') ?> 👋</h2>
             <p class="text-muted mb-0">Voici l'état actuel de vos recrutements de stagiaires.</p>
         </div>
-        <button class="btn-publish shadow">
+        <a href="publierOffre.php" class="btn btn-publish shadow text-white" style="text-decoration:none;">
             <i class="fa-solid fa-paper-plane me-2"></i> Publier une nouvelle offre
-        </button>
+        </a>
     </div>
 
     <div class="row g-4 mb-2">
         <div class="col-md-4">
             <div class="stat-card bg-gradient-blue shadow">
                 <small class="text-uppercase fw-600 opacity-75">Offres publiées</small>
-                <h2>12</h2>
+                <h2><?= sprintf("%02d", $nb_offres) ?></h2>
                 <i class="fa-solid fa-briefcase bg-icon"></i>
-                <div class="mt-2" style="font-size: 0.8rem;">3 offres actives cette semaine</div>
+                <div class="mt-2" style="font-size: 0.8rem;">Gérez vos annonces actives</div>
             </div>
         </div>
 
         <div class="col-md-4">
             <div class="stat-card bg-gradient-purple shadow">
                 <small class="text-uppercase fw-600 opacity-75">Candidatures reçues</small>
-                <h2>34</h2>
+                <h2><?= sprintf("%02d", $nb_candidatures) ?></h2>
                 <i class="fa-solid fa-user-tie bg-icon"></i>
-                <div class="mt-2" style="font-size: 0.8rem;">+12 nouveaux profils à consulter</div>
+                <div class="mt-2" style="font-size: 0.8rem;">Consultez les nouveaux profils</div>
             </div>
         </div>
 
         <div class="col-md-4">
             <div class="stat-card bg-gradient-orange shadow">
                 <small class="text-uppercase fw-600 opacity-75">Stages en cours</small>
-                <h2>05</h2>
+                <h2><?= sprintf("%02d", $nb_stages) ?></h2>
                 <i class="fa-solid fa-user-graduate bg-icon"></i>
-                <div class="mt-2" style="font-size: 0.8rem;">Suivi de l'évolution des stagiaires</div>
+                <div class="mt-2" style="font-size: 0.8rem;">Suivi des stagiaires acceptés</div>
             </div>
         </div>
     </div>
 
-    <div class="custom-table-card shadow">
+    <div class="custom-table-card shadow mt-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h5 class="mb-0 fw-bold">Dernières candidatures reçues</h5>
-            <div class="dropdown">
-                <button class="btn btn-sm btn-dark border-secondary text-muted" type="button">Filtrer par offre</button>
-            </div>
+            <a href="gestCand.php" class="btn btn-sm btn-dark border-secondary text-muted">Voir tout</a>
         </div>
 
         <div class="table-responsive">
@@ -222,41 +266,45 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="bg-secondary rounded-circle me-3 d-flex align-items-center justify-content-center" style="width: 35px; height: 35px; font-size: 0.8rem;">JP</div>
-                                <span class="fw-bold">Jean Paul</span>
-                            </div>
-                        </td>
-                        <td><span class="badge bg-dark border border-secondary text-white">Développeur Web</span></td>
-                        <td>20/04/2026</td>
-                        <td><span class="badge badge-status bg-warning text-dark">En attente</span></td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-outline-info me-1"><i class="fa-solid fa-eye"></i></button>
-                            <button class="btn btn-sm btn-outline-success"><i class="fa-solid fa-check"></i></button>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="bg-secondary rounded-circle me-3 d-flex align-items-center justify-content-center" style="width: 35px; height: 35px; font-size: 0.8rem;">AN</div>
-                                <span class="fw-bold">Alice N.</span>
-                            </div>
-                        </td>
-                        <td><span class="badge bg-dark border border-secondary text-white">Data Analyst</span></td>
-                        <td>21/04/2026</td>
-                        <td><span class="badge badge-status bg-success">Acceptée</span></td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-outline-info me-1"><i class="fa-solid fa-eye"></i></button>
-                            <button class="btn btn-sm btn-outline-secondary" disabled><i class="fa-solid fa-check"></i></button>
-                        </td>
-                    </tr>
+                    <?php if (empty($dernieres_candidatures)): ?>
+                        <tr><td colspan="5" class="text-center text-muted">Aucune candidature pour le moment.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ($dernieres_candidatures as $c): 
+                            // Initiales
+                            $mots = explode(" ", $c['nom_complet']);
+                            $init = strtoupper(substr($mots[0],0,1).(isset($mots[1])?substr($mots[1],0,1):""));
+                        ?>
+                        <tr>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <div class="bg-secondary text-white rounded-circle me-3 d-flex align-items-center justify-content-center" style="width: 35px; height: 35px; font-size: 0.8rem;">
+                                        <?= $init ?>
+                                    </div>
+                                    <span class="fw-bold"><?= htmlspecialchars($c['nom_complet']) ?></span>
+                                </div>
+                            </td>
+                            <td><span class="badge bg-dark border border-secondary text-white"><?= htmlspecialchars($c['titre_offre']) ?></span></td>
+                            <td><?= date('d/m/Y', strtotime($c['date_postulation'])) ?></td>
+                            <td>
+                                <?php if($c['statut_candidature'] == 'en_attente'): ?>
+                                    <span class="badge badge-status bg-warning text-dark">En attente</span>
+                                <?php elseif($c['statut_candidature'] == 'acceptee'): ?>
+                                    <span class="badge badge-status bg-success">Acceptée</span>
+                                <?php else: ?>
+                                    <span class="badge badge-status bg-danger">Refusée</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="text-end">
+                                <a href="profilEtudiant.php?id=<?= $c['id_etudiant'] ?>" class="btn btn-sm btn-outline-info me-1"><i class="fa-solid fa-eye"></i></a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
     </div>
-
+</div>
 </div>
 
 </body>

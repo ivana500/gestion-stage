@@ -1,3 +1,51 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+// Récupération des offres actives (on joint l'utilisateur pour avoir le nom de l'entreprise)
+$sql = "SELECT o.*, u.nom_complet as entreprise_nom, e.siege_social 
+        FROM OFFRE_STAGE o
+        JOIN UTILISATEUR u ON o.id_entreprise = u.id_user 
+        LEFT JOIN ENTREPRISE e ON u.id_user = e.id_user 
+        WHERE o.statut = 'ouverte' 
+        AND (o.date_limite >= CURDATE() OR o.date_limite IS NULL)
+        ORDER BY o.id_offre DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute();
+$offres = $stmt->fetchAll();
+
+// Traitement AJAX de la postulation
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_postuler'])) {
+    header('Content-Type: application/json');
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'etudiant') {
+        echo json_encode(['status' => 'error', 'message' => 'Connectez-vous en tant qu\'étudiant.']);
+        exit;
+    }
+
+    $id_offre = intval($_POST['id_offre']);
+    $id_etudiant = $_SESSION['user_id'];
+
+    try {
+        // Vérifier si déjà postulé
+        $check = $pdo->prepare("SELECT id_candidature FROM CANDIDATURE WHERE id_offre = ? AND id_etudiant = ?");
+        $check->execute([$id_offre, $id_etudiant]);
+
+        if ($check->rowCount() > 0) {
+            echo json_encode(['status' => 'info', 'message' => 'Vous avez déjà postulé à cette offre.']);
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO CANDIDATURE (id_etudiant, id_offre) VALUES (?, ?)");
+            $stmt->execute([$id_etudiant, $id_offre]);
+            echo json_encode(['status' => 'success', 'message' => 'Candidature envoyée !']);
+        }
+    } catch (Exception $e) {
+        echo json_encode(['status' => 'error', 'message' => 'Erreur technique.']);
+    }
+    exit; // Très important : on arrête le script ici pour ne pas envoyer le HTML
+}
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -212,102 +260,107 @@
             <p class="text-muted mb-0">Trouvez le stage qui correspond à vos ambitions.</p>
         </div>
 
-        <div class="search-container d-none d-lg-block">
+        <form action="" method="GET" class="search-container d-none d-lg-block">
             <i class="fa-solid fa-magnifying-glass"></i>
-            <input type="text" class="search-box" placeholder="Poste, entreprise, ville...">
-        </div>
+            <input type="text" name="q" class="search-box" placeholder="Poste, entreprise, ville...">
+        </form>
     </div>
 
     <div class="row g-4">
+        <?php if (count($offres) > 0): ?>
+           <?php foreach ($offres as $offre): 
+    // On prépare les initiales pour le logo (ex: AZUR -> AZ)
+    $initials = strtoupper(substr($offre['entreprise_nom'], 0, 2));
+?>
+<div class="col-xl-4 col-md-6" data-aos="fade-up">
+    <div class="card-offre">
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="company-logo"><?= $initials ?></div>
+            <span class="salary-tag">Stage</span>
+        </div>
+        
+        <h4 class="fw-bold mb-1"><?= htmlspecialchars($offre['titre']) ?></h4>
+        
+        <p class="text-muted small mb-3">
+            <?= htmlspecialchars($offre['entreprise_nom']) ?> • <?= htmlspecialchars($offre['siege_social'] ?? 'Douala') ?>
+        </p>
 
-        <div class="col-xl-4 col-md-6" data-aos="fade-up" data-aos-delay="100">
-            <div class="card-offre">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="company-logo">TS</div>
-                    <span class="salary-tag">450k CFA</span>
-                </div>
-                
-                <h4 class="fw-bold mb-1">Développeur Web Fullstack</h4>
-                <p class="text-muted small mb-3">Tech Solutions • Douala</p>
-
-                <div class="mb-4">
-                    <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> 3 mois</span>
-                    <span class="badge-custom"><i class="fa-solid fa-house-laptop me-1"></i> Hybride</span>
-                </div>
-
-                <p class="small text-muted mb-4">
-                    Rejoignez une équipe agile pour concevoir des solutions web innovantes avec React et Node.js.
-                </p>
-
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <small class="text-muted"><i class="fa-regular fa-calendar me-1"></i> Expire le 30 Mai</small>
-                </div>
-
-                <button class="btn-apply">Postuler maintenant</button>
-            </div>
+        <div class="mb-4">
+            <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> Offre <?= htmlspecialchars($offre['statut']) ?></span>
+            <span class="badge-custom"><i class="fa-solid fa-location-dot me-1"></i> Présentiel</span>
         </div>
 
-        <div class="col-xl-4 col-md-6" data-aos="fade-up" data-aos-delay="200">
-            <div class="card-offre">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="company-logo" style="color:var(--accent);">DC</div>
-                    <span class="salary-tag">350k CFA</span>
-                </div>
-                
-                <h4 class="fw-bold mb-1">Data Analyst Junior</h4>
-                <p class="text-muted small mb-3">Data Corp • Yaoundé</p>
+        <p class="small text-muted mb-4">
+            <?= nl2br(htmlspecialchars(substr($offre['description'], 0, 100))) ?>...
+        </p>
 
-                <div class="mb-4">
-                    <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> 2 mois</span>
-                    <span class="badge-custom"><i class="fa-solid fa-location-dot me-1"></i> Présentiel</span>
-                </div>
-
-                <p class="small text-muted mb-4">
-                    Analyse de données massives et création de dashboards interactifs sous Power BI et Python.
-                </p>
-
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <small class="text-muted"><i class="fa-regular fa-calendar me-1"></i> Expire le 15 Mai</small>
-                </div>
-
-                <button class="btn-apply">Postuler maintenant</button>
-            </div>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <small class="text-muted">
+                <i class="fa-regular fa-calendar me-1"></i> 
+                Limite : <?= date('d/m/Y', strtotime($offre['date_limite'])) ?>
+            </small>
         </div>
 
-        <div class="col-xl-4 col-md-6" data-aos="fade-up" data-aos-delay="300">
-            <div class="card-offre">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="company-logo" style="color:#f59e0b;">CS</div>
-                    <span class="salary-tag">Sur devis</span>
-                </div>
-                
-                <h4 class="fw-bold mb-1">Product Designer UI/UX</h4>
-                <p class="text-muted small mb-3">Creative Studio • Remote</p>
-
-                <div class="mb-4">
-                    <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> 1 mois</span>
-                    <span class="badge-custom"><i class="fa-solid fa-earth-africa me-1"></i> Télétravail</span>
-                </div>
-
-                <p class="small text-muted mb-4">
-                    Conception de maquettes haute fidélité sur Figma pour des clients internationaux.
-                </p>
-
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <small class="text-muted"><i class="fa-regular fa-calendar me-1"></i> Expire le 10 Juin</small>
-                </div>
-
-                <button class="btn-apply">Postuler maintenant</button>
+       <button type="button" 
+        class="btn-apply text-center d-block w-100 border-0" 
+        onclick="postulerAjax(<?= $offre['id_offre'] ?>, this)">
+    Postuler maintenant
+</button>
+    </div>
+</div>
+<?php endforeach; ?>
+        <?php else: ?>
+            <div class="col-12 text-center py-5">
+                <i class="fa-solid fa-folder-open fa-3x text-muted mb-3"></i>
+                <p class="text-muted">Aucune offre disponible pour le moment.</p>
             </div>
-        </div>
-
+        <?php endif; ?>
     </div>
 </div>
 
 <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
 <script>
     AOS.init({ duration: 800, once: true });
+    function postulerAjax(idOffre, btn) {
+    if (!confirm('Voulez-vous postuler à cette offre ?')) return;
+
+    // On prépare les données
+    let formData = new FormData();
+    formData.append('ajax_postuler', '1');
+    formData.append('id_offre', idOffre);
+
+    // Désactiver le bouton pendant l'envoi
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Envoi...';
+
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            btn.classList.replace('btn-apply', 'btn-success');
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> Postulé !';
+        } else if (data.status === 'info') {
+            alert(data.message);
+            btn.innerHTML = 'Déjà postulé';
+            btn.classList.add('btn-secondary');
+        } else {
+            alert(data.message);
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    });
+}
 </script>
+
 
 </body>
 </html>
