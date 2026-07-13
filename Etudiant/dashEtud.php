@@ -1,3 +1,60 @@
+<?php
+session_start();
+include('../Auth/config_db.php');
+
+// 1. Vérification de la session de l'étudiant
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../Auth/connexion.php');
+    exit();
+}
+
+$id_etudiant = $_SESSION['user_id'];
+
+// 2. Récupération du nom complet de l'étudiant connecté (id_user et nom_complet)
+$stmt_user = $pdo->prepare("SELECT nom_complet FROM UTILISATEUR WHERE id_user = ?");
+$stmt_user->execute([$id_etudiant]);
+$user_info = $stmt_user->fetch(PDO::FETCH_ASSOC);
+
+$nom_complet = $user_info ? htmlspecialchars($user_info['nom_complet']) : "Étudiant";
+
+// 3. STATISTIQUE 1 : Nombre d'offres globales disponibles (statut 'ouverte')
+$stmt_offres = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte'");
+$total_offres_dispo = $stmt_offres->fetchColumn();
+
+// Nombre d'offres ajoutées cette semaine
+$stmt_offres_semaine = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte' AND date_limite >= CURDATE()"); 
+// Note : Si tu n'as pas de champ "date_publication", on utilise un fallback ou on affiche 0 pour l'instant
+$offres_cette_semaine = $stmt_offres_semaine->fetchColumn();
+
+
+// 4. STATISTIQUE 2 : Nombre total de candidatures déposées par l'étudiant
+$stmt_cand_total = $pdo->prepare("SELECT COUNT(*) FROM CANDIDATURE WHERE id_etudiant = ?");
+$stmt_cand_total->execute([$id_etudiant]);
+$total_mes_candidatures = $stmt_cand_total->fetchColumn();
+
+
+// 5. STATISTIQUE 3 : Vérifier si l'étudiant a un stage en cours ou à venir
+$stmt_stage_en_cours = $pdo->prepare("SELECT COUNT(*) FROM STAGE WHERE id_etudiant = ? AND statut_stage IN ('en_cours', 'a_venir')");
+$stmt_stage_en_cours->execute([$id_etudiant]);
+$stage_en_cours = $stmt_stage_en_cours->fetchColumn();
+
+
+// 6. TABLEAU : Récupération des 5 dernières candidatures conformes à ton SQL
+$sql_dernieres_cand = "SELECT c.id_candidature, c.date_postulation, c.statut_candidature, 
+                              o.titre, 
+                              u.nom_complet AS nom_entreprise 
+                       FROM CANDIDATURE c
+                       JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+                       JOIN UTILISATEUR u ON o.id_entreprise = u.id_user
+                       WHERE c.id_etudiant = ?
+                       ORDER BY c.date_postulation DESC 
+                       LIMIT 5";
+
+$stmt_liste = $pdo->prepare($sql_dernieres_cand);
+$stmt_liste->execute([$id_etudiant]);
+$dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -137,12 +194,14 @@
     
     <div class="px-4 mb-5 d-flex align-items-center">
         <div class="position-relative">
-            <img src="https://ui-avatars.com/api/?name=Etudiant+User&background=3b82f6&color=fff" class="rounded-circle me-3" width="45">
+            <img src="https://ui-avatars.com/api/?name=<?= urlencode($nom_complet); ?>&background=3b82f6&color=fff" class="rounded-circle me-3" width="45">
             <span class="position-absolute bottom-0 end-0 badge border border-light rounded-circle bg-success p-1" style="transform: translate(-15px, 0);"><span class="visually-hidden">online</span></span>
         </div>
         <div>
-            <div class="fw-bold" style="font-size: 0.85rem;">Espace Étudiant</div>
-            <small class="text-muted" style="font-size: 0.7rem;">ID: 2026-042</small>
+            <div class="fw-bold" style="font-size: 0.85rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <?= $nom_complet; ?>
+            </div>
+            <small class="text-muted" style="font-size: 0.7rem;">ID: E-<?= str_pad($id_etudiant, 3, '0', STR_PAD_LEFT); ?></small>
         </div>
     </div>
 
@@ -152,7 +211,7 @@
         <a href="Candidature.php" class="nav-link"><i class="fa-solid fa-paper-plane"></i> Mes candidatures</a>
         <a href="MonStage.php" class="nav-link"><i class="fa-solid fa-laptop-code"></i> Mon stage</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="login.php" class="nav-link text-danger"><i class="fa-solid fa-right-from-bracket"></i> Déconnexion</a>
+        <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')"><i class="fa-solid fa-right-from-bracket"></i> Déconnexion</a>
     </nav>
 </div>
 
@@ -171,10 +230,10 @@
         <div class="col-md-4 fade-in">
             <div class="stat-card bg-blue shadow-sm">
                 <small class="text-uppercase fw-600 opacity-75">Offres disponibles</small>
-                <h2>15</h2>
+                <h2><?= str_pad($total_offres_dispo, 2, '0', STR_PAD_LEFT); ?></h2>
                 <i class="fa-solid fa-briefcase bg-icon"></i>
                 <div class="mt-2" style="font-size: 0.8rem;">
-                    <i class="fa-solid fa-arrow-up"></i> +4 cette semaine
+                    <i class="fa-solid fa-arrow-up"></i> +<?= $offres_cette_semaine ?> cette semaine
                 </div>
             </div>
         </div>
@@ -182,21 +241,21 @@
         <div class="col-md-4 fade-in delay-1">
             <div class="stat-card bg-green shadow-sm">
                 <small class="text-uppercase fw-600 opacity-75">Mes candidatures</small>
-                <h2>03</h2>
+                <h2><?= str_pad($total_mes_candidatures, 2, '0', STR_PAD_LEFT); ?></h2>
                 <i class="fa-solid fa-paper-plane bg-icon"></i>
                 <div class="mt-2" style="font-size: 0.8rem;">
-                    Dernière mise à jour : Hier
+                    Suivi de vos demandes en temps réel
                 </div>
             </div>
         </div>
 
         <div class="col-md-4 fade-in delay-2">
             <div class="stat-card bg-orange shadow-sm">
-                <small class="text-uppercase fw-600 opacity-75">Stage en cours</small>
-                <h2>01</h2>
+                <small class="text-uppercase fw-600 opacity-75">Stage validé</small>
+                <h2><?= str_pad($stage_en_cours, 2, '0', STR_PAD_LEFT); ?></h2>
                 <i class="fa-solid fa-spinner bg-icon"></i>
                 <div class="mt-2" style="font-size: 0.8rem;">
-                    Rapport dû dans 12 jours
+                    <?= $stage_en_cours > 0 ? "Aperçu disponible sous 'Mon Stage'" : "Aucun stage actif pour l'instant"; ?>
                 </div>
             </div>
         </div>
@@ -205,7 +264,7 @@
     <div class="custom-table-card fade-in delay-2 shadow">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h5 class="mb-0 fw-bold"><i class="fa-solid fa-clock-rotate-left me-2 text-primary"></i> Mes dernières candidatures</h5>
-            <button class="btn btn-sm btn-outline-secondary">Voir tout</button>
+            <a href="Candidature.php" class="btn btn-sm btn-outline-secondary text-decoration-none text-white">Voir tout</a>
         </div>
 
         <div class="table-responsive">
@@ -221,53 +280,51 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td><span class="text-muted">#01</span></td>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="bg-white rounded p-1 me-2" style="width: 30px; height: 30px;">
-                                    <img src="https://upload.wikimedia.org/wikipedia/commons/c/c8/Orange_logo.svg" width="100%">
-                                </div>
-                                <span class="fw-bold">Orange Cameroun</span>
-                            </div>
-                        </td>
-                        <td>Développeur Web</td>
-                        <td>10 Avril 2026</td>
-                        <td><span class="badge bg-warning text-dark"><i class="fa-solid fa-hourglass-half me-1"></i> En attente</span></td>
-                        <td class="text-end"><a href="#" class="btn btn-sm btn-dark border-secondary"><i class="fa-solid fa-eye"></i></a></td>
-                    </tr>
+                    <?php if (empty($dernieres_candidatures)): ?>
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-muted">Vous n'avez pas encore déposé de candidature.</td>
+                        </tr>
+                    <?php else: 
+                        $compteur = 1;
+                        foreach ($dernieres_candidatures as $cand): 
+                            // Gestion graphique dynamique des badges de statut
+                            $badge_class = "bg-warning text-dark";
+                            $icon_class = "fa-hourglass-half";
+                            $statut_texte = "En attente";
 
-                    <tr>
-                        <td><span class="text-muted">#02</span></td>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="bg-warning rounded p-1 me-2 d-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">
-                                    <span class="text-dark fw-bold" style="font-size: 0.6rem;">MTN</span>
+                            if ($cand['statut_candidature'] === 'acceptee') {
+                                $badge_class = "bg-success text-white";
+                                $icon_class = "fa-check-circle";
+                                $statut_texte = "Accepté";
+                            } elseif ($cand['statut_candidature'] === 'refusee') {
+                                $badge_class = "bg-danger text-white";
+                                $icon_class = "fa-times-circle";
+                                $statut_texte = "Refusé";
+                            }
+                    ?>
+                        <tr>
+                            <td><span class="text-muted">#<?= str_pad($compteur++, 2, '0', STR_PAD_LEFT); ?></span></td>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <div class="bg-secondary rounded p-1 me-2 d-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">
+                                        <i class="fa-solid fa-building text-white" style="font-size: 0.8rem;"></i>
+                                    </div>
+                                    <span class="fw-bold"><?= htmlspecialchars($cand['nom_entreprise']) ?></span>
                                 </div>
-                                <span class="fw-bold">MTN Foundation</span>
-                            </div>
-                        </td>
-                        <td>Ingénieur Réseau</td>
-                        <td>08 Avril 2026</td>
-                        <td><span class="badge bg-success"><i class="fa-solid fa-check-circle me-1"></i> Accepté</span></td>
-                        <td class="text-end"><a href="#" class="btn btn-sm btn-dark border-secondary"><i class="fa-solid fa-eye"></i></a></td>
-                    </tr>
-
-                    <tr>
-                        <td><span class="text-muted">#03</span></td>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="bg-info rounded p-1 me-2 d-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">
-                                    <i class="fa-solid fa-building text-white" style="font-size: 0.8rem;"></i>
-                                </div>
-                                <span class="fw-bold">Camtel</span>
-                            </div>
-                        </td>
-                        <td>Technicien Maintenance</td>
-                        <td>05 Avril 2026</td>
-                        <td><span class="badge bg-danger"><i class="fa-solid fa-times-circle me-1"></i> Refusé</span></td>
-                        <td class="text-end"><a href="#" class="btn btn-sm btn-dark border-secondary"><i class="fa-solid fa-eye"></i></a></td>
-                    </tr>
+                            </td>
+                            <td><?= htmlspecialchars($cand['titre']) ?></td>
+                            <td><?= date('d M Y', strtotime($cand['date_depot'])) ?></td>
+                            <td>
+                                <span class="badge <?= $badge_class ?>">
+                                    <i class="fa-solid <?= $icon_class ?> me-1"></i> <?= $statut_texte ?>
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <a href="Candidature.php" class="btn btn-sm btn-dark border-secondary"><i class="fa-solid fa-eye"></i></a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
