@@ -228,7 +228,6 @@ $total_offres = count($liste_offres);
         <a href="OffrePub.php" class="nav-link active"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-
          <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
 <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">

@@ -1,3 +1,127 @@
+<?php
+session_start();
+
+// 1. Vérifier la connexion et l'existence des variables de session
+if (!isset($_SESSION['user_id']) || !isset($_SESSION['user_role'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// 2. Vérifier si l'utilisateur a le droit d'être ici (admin ou sous_admin)
+if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'sous_admin') {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$user_role = $_SESSION['user_role'];
+
+// 3. Connexion à la Base de données (Port 3307) - UNIQUE ET MUTUALISÉE
+try {
+    $pdo = new PDO("mysql:host=localhost;port=3307;dbname=gestion_stages;charset=utf8mb4", "root", "");
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    die("Erreur de connexion : " . $e->getMessage());
+}
+
+// 4. Filtrer le nombre d'étudiants selon le rôle (Admin vs Enseignant/Sous-Admin)
+if ($user_role === 'admin') {
+    // Le Super Admin voit le total global
+    $totalEtudiants = (int) $pdo->query("SELECT COUNT(*) FROM ETUDIANT")->fetchColumn();
+} else {
+    // Le Sous-Admin (Enseignant) ne compte que ses propres étudiants assignés
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM ETUDIANT WHERE id_enseignant = ?");
+    $stmt->execute([$user_id]);
+    $totalEtudiants = (int) $stmt->fetchColumn();
+}
+
+// ============================================================
+// RÉCUPÉRATION DES STATISTIQUES GLOBALISÉES (KPI CARDS)
+// ============================================================
+
+// a. Total Utilisateurs (Comptes globaux de la plateforme)
+$totalUsers = (int) $pdo->query("SELECT COUNT(*) FROM UTILISATEUR")->fetchColumn();
+
+// b. Note : $totalEtudiants est déjà calculé plus haut selon le rôle !
+
+// c. Total Entreprises (Utilisateurs ayant le rôle d'entreprise)
+$totalEntreprises = (int) $pdo->query("SELECT COUNT(*) FROM UTILISATEUR WHERE role = 'entreprise'")->fetchColumn();
+
+// d. Total Offres de Stage publiées
+$totalOffres = (int) $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE")->fetchColumn();
+
+// e. Total Candidatures soumises
+$totalCandidatures = (int) $pdo->query("SELECT COUNT(*) FROM CANDIDATURE")->fetchColumn();
+
+
+// ============================================================
+// FLUX TEMPS RÉEL (HISTORIQUE DES DERNIÈRES ACTIONS)
+// ============================================================
+$activities = [];
+
+// 1. Dernières offres publiées
+$queryOffresRecentes = $pdo->query("
+    SELECT o.titre AS action_titre, 
+           CONCAT('Nouvelle offre par ', u.nom_complet) AS action_details,
+           o.date_limite AS date_ref, 
+           'offre' AS type_act
+    FROM OFFRE_STAGE o
+    JOIN UTILISATEUR u ON o.id_entreprise = u.id_user
+    ORDER BY o.id_offre DESC LIMIT 3
+");
+while ($row = $queryOffresRecentes->fetch(PDO::FETCH_ASSOC)) {
+    $activities[] = $row;
+}
+
+// 2. Dernières candidatures postulées
+$queryCandRecentes = $pdo->query("
+    SELECT o.titre AS action_titre, 
+           CONCAT(u.nom_complet, ' a postulé') AS action_details,
+           c.date_postulation AS date_ref,
+           'candidature' AS type_act
+    FROM CANDIDATURE c
+    JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
+    JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+    ORDER BY c.date_postulation DESC LIMIT 3
+");
+while ($row = $queryCandRecentes->fetch(PDO::FETCH_ASSOC)) {
+    $activities[] = $row;
+}
+
+// Tri des activités combinées (plus récentes en premier)
+usort($activities, function($a, $b) {
+    return strcmp($b['date_ref'], $a['date_ref']);
+});
+$activities = array_slice($activities, 0, 4);
+
+
+// ============================================================
+// DONNÉES DYNAMIQUES POUR LES GRAPHIQUES CHART.JS
+// ============================================================
+
+// A. Statuts des Stages (Doughnut 1)
+$stagesEnCours = (int) $pdo->query("SELECT COUNT(*) FROM CANDIDATURE WHERE statut_candidature = 'acceptee'")->fetchColumn();
+$stagesAttente = (int) $pdo->query("SELECT COUNT(*) FROM CANDIDATURE WHERE statut_candidature = 'en_attente'")->fetchColumn();
+$stagesRefuses = (int) $pdo->query("SELECT COUNT(*) FROM CANDIDATURE WHERE statut_candidature = 'refusee'")->fetchColumn();
+
+// B. Candidatures par mois (Bar Chart - 6 derniers mois)
+$moisLabels = [];
+$candidaturesMoisData = [];
+for ($i = 5; $i >= 0; $i--) {
+    $moisLabels[] = date('M', strtotime("-$i months"));
+    $dateStart = date('Y-m-01', strtotime("-$i months"));
+    $dateEnd = date('Y-m-t', strtotime("-$i months"));
+    
+    $stmtMois = $pdo->prepare("SELECT COUNT(*) FROM CANDIDATURE WHERE date_postulation BETWEEN ? AND ?");
+    $stmtMois->execute([$dateStart, $dateEnd]);
+    $candidaturesMoisData[] = (int) $stmtMois->fetchColumn();
+}
+
+// C. Population Active (Doughnut 2)
+$roleEtudiants = $totalEtudiants; // Filtre par rôle respecté
+$roleEntreprises = $roleEntreprises ?? $totalEntreprises;
+$roleAdmins = (int) $pdo->query("SELECT COUNT(*) FROM UTILISATEUR WHERE role = 'admin'")->fetchColumn();
+?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -27,7 +151,7 @@
             font-size: 0.9rem;
         }
 
-        /* SIDEBAR UNIFIÉE */
+        /* SIDEBAR */
         .sidebar {
             height: 100vh;
             background-color: var(--sidebar-dark);
@@ -138,7 +262,6 @@
         .bg-custom-purple { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
         .bg-custom-orange { background: linear-gradient(135deg, #f59e0b, #d97706); }
         .bg-custom-red { background: linear-gradient(135deg, #ef4444, #dc2626); }
-
     </style>
 </head>
 <body>
@@ -153,7 +276,7 @@
             <i class="fa-solid fa-user-tie text-white"></i>
         </div>
         <div>
-            <div class="fw-bold small">Admin Principal</div>
+            <div class="fw-bold small"><?php echo ($user_role === 'admin') ? 'Admin Principal' : 'Sous-Admin'; ?></div>
             <small class="text-success" style="font-size: 0.7rem;"><i class="fa-solid fa-circle fa-2xs me-1"></i> Session Active</small>
         </div>
     </div>
@@ -163,6 +286,10 @@
         <a href="gestUtil.php" class="nav-link"><i class="fa-solid fa-users-gears"></i> Utilisateurs</a>
         <a href="validStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
         <a href="Config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
+        <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+            <i class="fa-solid fa-right-from-bracket"></i>
+            <span>Déconnexion</span>
+        </a>
     </nav>
 </div>
 
@@ -173,7 +300,7 @@
             <p class="text-muted mb-0">Statistiques globales de la plateforme de stages.</p>
         </div>
         <div class="text-end pb-1">
-            <span class="badge bg-white bg-opacity-10 px-3 py-2 rounded-pill">Avril 2026</span>
+            <span class="badge bg-white bg-opacity-10 px-3 py-2 rounded-pill"><?php echo date('F Y'); ?></span>
         </div>
     </div>
 
@@ -181,46 +308,46 @@
         <div class="col-md">
             <div class="stat-card bg-custom-blue text-white">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div><small class="fw-bold opacity-75">UTILISATEURS</small><h2>156</h2></div>
+                    <div><small class="fw-bold opacity-75">UTILISATEURS</small><h2><?php echo $totalUsers; ?></h2></div>
                     <i class="fa-solid fa-users icon-box"></i>
                 </div>
-                <a href="#" class="footer-link">Gérer les comptes <i class="fa-solid fa-chevron-right"></i></a>
+                <a href="gestUtil.php" class="footer-link">Gérer les comptes <i class="fa-solid fa-chevron-right"></i></a>
             </div>
         </div>
         <div class="col-md">
             <div class="stat-card bg-custom-green text-white">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div><small class="fw-bold opacity-75">ÉTUDIANTS</small><h2>87</h2></div>
+                    <div><small class="fw-bold opacity-75">ÉTUDIANTS</small><h2><?php echo $totalEtudiants; ?></h2></div>
                     <i class="fa-solid fa-user-graduate icon-box"></i>
                 </div>
-                <a href="#" class="footer-link">Liste complète <i class="fa-solid fa-chevron-right"></i></a>
+                <a href="gestUtil.php?role=etudiant" class="footer-link">Liste complète <i class="fa-solid fa-chevron-right"></i></a>
             </div>
         </div>
         <div class="col-md">
             <div class="stat-card bg-custom-purple text-white">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div><small class="fw-bold opacity-75">ENTREPRISES</small><h2>42</h2></div>
+                    <div><small class="fw-bold opacity-75">ENTREPRISES</small><h2><?php echo $totalEntreprises; ?></h2></div>
                     <i class="fa-solid fa-building icon-box"></i>
                 </div>
-                <a href="#" class="footer-link">Partenariats <i class="fa-solid fa-chevron-right"></i></a>
+                <a href="gestUtil.php?role=entreprise" class="footer-link">Partenariats <i class="fa-solid fa-chevron-right"></i></a>
             </div>
         </div>
         <div class="col-md">
             <div class="stat-card bg-custom-orange text-white">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div><small class="fw-bold opacity-75">OFFRES</small><h2>64</h2></div>
+                    <div><small class="fw-bold opacity-75">OFFRES</small><h2><?php echo $totalOffres; ?></h2></div>
                     <i class="fa-solid fa-briefcase icon-box"></i>
                 </div>
-                <a href="#" class="footer-link">Modérer les offres <i class="fa-solid fa-chevron-right"></i></a>
+                <a href="validStage.php" class="footer-link">Modérer les offres <i class="fa-solid fa-chevron-right"></i></a>
             </div>
         </div>
         <div class="col-md">
             <div class="stat-card bg-custom-red text-white">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div><small class="fw-bold opacity-75">CANDIDATURES</small><h2>123</h2></div>
+                    <div><small class="fw-bold opacity-75">CANDIDATURES</small><h2><?php echo $totalCandidatures; ?></h2></div>
                     <i class="fa-solid fa-file-lines icon-box"></i>
                 </div>
-                <a href="#" class="footer-link">Suivi des dossiers <i class="fa-solid fa-chevron-right"></i></a>
+                <a href="validStage.php" class="footer-link">Suivi des dossiers <i class="fa-solid fa-chevron-right"></i></a>
             </div>
         </div>
     </div>
@@ -231,47 +358,59 @@
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h6 class="fw-bold mb-0"><i class="fa-solid fa-chart-line me-2 text-primary"></i> Analyse des flux</h6>
                     <select class="form-select form-select-sm bg-dark text-white border-0 opacity-75" style="width:130px">
-                        <option>Année 2026</option>
+                        <option>Année <?php echo date('Y'); ?></option>
                     </select>
                 </div>
                 <canvas id="evolutionChart" height="280"></canvas>
             </div>
         </div>
+        
         <div class="col-md-4">
             <div class="chart-container shadow-sm">
                 <h6 class="fw-bold mb-4"><i class="fa-solid fa-bolt-lightning me-2 text-warning"></i> Flux en temps réel</h6>
                 <div class="mt-2">
-                    <div class="activity-item">
-                        <div class="activity-icon bg-custom-blue text-white"><i class="fa-solid fa-plus fa-xs"></i></div>
-                        <div>
-                            <div class="fw-bold">Offre TechSoft</div>
-                            <small class="text-muted">Nouvelle publication • 5 min</small>
-                        </div>
-                    </div>
-                    <div class="activity-item">
-                        <div class="activity-icon bg-custom-purple text-white"><i class="fa-solid fa-paper-plane fa-xs"></i></div>
-                        <div>
-                            <div class="fw-bold">Jean Dupont</div>
-                            <small class="text-muted">Candidature envoyée • 15 min</small>
-                        </div>
-                    </div>
-                    <div class="activity-item">
-                        <div class="activity-icon bg-custom-green text-white"><i class="fa-solid fa-check fa-xs"></i></div>
-                        <div>
-                            <div class="fw-bold">Dossier Validé</div>
-                            <small class="text-muted">Marie Claire • 1 h</small>
-                        </div>
-                    </div>
+                    <?php if (count($activities) > 0): ?>
+                        <?php foreach($activities as $act): ?>
+                            <div class="activity-item">
+                                <?php if ($act['type_act'] == 'offre'): ?>
+                                    <div class="activity-icon bg-custom-blue text-white"><i class="fa-solid fa-plus fa-xs"></i></div>
+                                <?php else: ?>
+                                    <div class="activity-icon bg-custom-purple text-white"><i class="fa-solid fa-paper-plane fa-xs"></i></div>
+                                <?php endif; ?>
+                                <div>
+                                    <div class="fw-bold"><?php echo htmlspecialchars($act['action_titre']); ?></div>
+                                    <small class="text-muted"><?php echo htmlspecialchars($act['action_details']); ?> • <?php echo date('d/m/Y H:i', strtotime($act['date_ref'])); ?></small>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="text-center text-muted py-4">Aucune activité récente.</div>
+                    <?php endif; ?>
                 </div>
-                <button class="btn btn-outline-primary btn-sm w-100 mt-4 border-opacity-25 rounded-3">Historique complet</button>
+                <a href="validStage.php" class="btn btn-outline-primary btn-sm w-100 mt-4 border-opacity-25 rounded-3 text-decoration-none">Historique complet</a>
             </div>
         </div>
     </div>
 
     <div class="row g-4">
-        <div class="col-md-4"><div class="chart-container"><h6>Statuts des Stages</h6><canvas id="statDonut"></canvas></div></div>
-        <div class="col-md-4"><div class="chart-container"><h6>Candidatures / Mois</h6><canvas id="barChart"></canvas></div></div>
-        <div class="col-md-4"><div class="chart-container"><h6>Population Active</h6><canvas id="typeDonut"></canvas></div></div>
+        <div class="col-md-4">
+            <div class="chart-container">
+                <h6>Statuts des Stages</h6>
+                <canvas id="statDonut"></canvas>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="chart-container">
+                <h6>Candidatures / Mois</h6>
+                <canvas id="barChart"></canvas>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="chart-container">
+                <h6>Population Active</h6>
+                <canvas id="typeDonut"></canvas>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -286,8 +425,20 @@ new Chart(document.getElementById('evolutionChart'), {
     data: {
         labels: ['Jan', 'Fev', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'],
         datasets: [
-            { label: 'Offres', data: [15, 12, 25, 20, 28, 22, 30, 25, 35, 45, 40, 42], borderColor: '#3b82f6', tension: 0.4, fill: true, backgroundColor: 'rgba(59, 130, 246, 0.05)' },
-            { label: 'Candidatures', data: [10, 25, 20, 35, 30, 40, 35, 30, 40, 50, 45, 48], borderColor: '#10b981', tension: 0.4 }
+            { 
+                label: 'Offres', 
+                data: [15, 12, 25, 20, 28, 22, 30, 25, 35, 45, 40, <?php echo (int) $totalOffres; ?>], 
+                borderColor: '#3b82f6', 
+                tension: 0.4, 
+                fill: true, 
+                backgroundColor: 'rgba(59, 130, 246, 0.05)' 
+            },
+            { 
+                label: 'Candidatures', 
+                data: [10, 25, 20, 35, 30, 40, 35, 30, 40, 50, 45, <?php echo (int) $totalCandidatures; ?>], 
+                borderColor: '#10b981', 
+                tension: 0.4 
+            }
         ]
     },
     options: { plugins: { legend: { display: true, position: 'bottom' } } }
@@ -297,8 +448,12 @@ new Chart(document.getElementById('evolutionChart'), {
 new Chart(document.getElementById('statDonut'), {
     type: 'doughnut',
     data: {
-        labels: ['En cours', 'Terminés', 'Attente'],
-        datasets: [{ data: [45, 30, 25], backgroundColor: ['#3b82f6', '#10b981', '#f59e0b'], borderWidth: 0 }]
+        labels: ['En cours', 'Acceptés', 'Refusés'],
+        datasets: [{ 
+            data: [<?php echo (int)$stagesAttente; ?>, <?php echo (int)$stagesEnCours; ?>, <?php echo (int)$stagesRefuses; ?>], 
+            backgroundColor: ['#f59e0b', '#10b981', '#ef4444'], 
+            borderWidth: 0 
+        }]
     },
     options: { cutout: '75%', plugins: { legend: { position: 'bottom' } } }
 });
@@ -307,17 +462,26 @@ new Chart(document.getElementById('statDonut'), {
 new Chart(document.getElementById('barChart'), {
     type: 'bar',
     data: {
-        labels: ['Jan', 'Fev', 'Mar', 'Avr', 'Mai', 'Juin'],
-        datasets: [{ label: 'Demandes', data: [15, 22, 18, 25, 20, 23], backgroundColor: '#3b82f6', borderRadius: 6 }]
+        labels: <?php echo json_encode($moisLabels); ?>,
+        datasets: [{ 
+            label: 'Demandes', 
+            data: <?php echo json_encode($candidaturesMoisData); ?>, 
+            backgroundColor: '#3b82f6', 
+            borderRadius: 6 
+        }]
     }
 });
 
-// Répartition
+// Répartition Active
 new Chart(document.getElementById('typeDonut'), {
     type: 'doughnut',
     data: {
-        labels: ['Étudiants', 'Entreprises', 'Encadreurs'],
-        datasets: [{ data: [60, 25, 15], backgroundColor: ['#3b82f6', '#10b981', '#8b5cf6'], borderWidth: 0 }]
+        labels: ['Étudiants', 'Entreprises', 'Administrateurs'],
+        datasets: [{ 
+            data: [<?php echo (int)$roleEtudiants; ?>, <?php echo (int)$roleEntreprises; ?>, <?php echo (int)$roleAdmins; ?>], 
+            backgroundColor: ['#3b82f6', '#10b981', '#8b5cf6'], 
+            borderWidth: 0 
+        }]
     },
     options: { cutout: '75%', plugins: { legend: { position: 'bottom' } } }
 });

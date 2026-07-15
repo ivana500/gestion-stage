@@ -3,7 +3,10 @@ session_start();
 include('../Auth/config_db.php');
 
 // Récupération des offres actives (on joint l'utilisateur pour avoir le nom de l'entreprise)
-$sql = "SELECT o.*, u.nom_complet as entreprise_nom, e.siege_social 
+$id_etudiant = $_SESSION['user_id'] ?? 0;
+
+$sql = "SELECT o.*, u.nom_complet as entreprise_nom, e.siege_social,
+        (SELECT COUNT(*) FROM CANDIDATURE c WHERE c.id_offre = o.id_offre AND c.id_etudiant = ?) as deja_postule
         FROM OFFRE_STAGE o
         JOIN UTILISATEUR u ON o.id_entreprise = u.id_user 
         LEFT JOIN ENTREPRISE e ON u.id_user = e.id_user 
@@ -12,7 +15,7 @@ $sql = "SELECT o.*, u.nom_complet as entreprise_nom, e.siege_social
         ORDER BY o.id_offre DESC";
 
 $stmt = $pdo->prepare($sql);
-$stmt->execute();
+$stmt->execute([$id_etudiant]);
 $offres = $stmt->fetchAll();
 
 // Traitement AJAX de la postulation
@@ -246,7 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_postuler'])) {
    <a href="dashEtud.php"><i class="fa-solid fa-grip-vertical"></i> Dashboard</a>
     <a href="listeStage.php" class="active"><i class="fa-solid fa-briefcase"></i> Offres de stage</a>
     <a href="Candidature.php"><i class="fa-solid fa-paper-plane"></i> Mes candidatures</a>
-    <a href="MonStage.php" ><i class="fa-solid fa-file-arrow-up"></i> Dépôt de rapport</a>
+    <a href="MonStage.php" ><i class="fa-solid fa-file-arrow-up"></i> Espace Documents</a>
     
     <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
         <a href="#" class="text-danger"><i class="fa-solid fa-arrow-right-from-bracket"></i> Déconnexion</a>
@@ -266,56 +269,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_postuler'])) {
         </form>
     </div>
 
-    <div class="row g-4">
-        <?php if (count($offres) > 0): ?>
-           <?php foreach ($offres as $offre): 
-    // On prépare les initiales pour le logo (ex: AZUR -> AZ)
-    $initials = strtoupper(substr($offre['entreprise_nom'], 0, 2));
-?>
-<div class="col-xl-4 col-md-6" data-aos="fade-up">
-    <div class="card-offre">
-        <div class="d-flex justify-content-between align-items-start">
-            <div class="company-logo"><?= $initials ?></div>
-            <span class="salary-tag">Stage</span>
-        </div>
-        
-        <h4 class="fw-bold mb-1"><?= htmlspecialchars($offre['titre']) ?></h4>
-        
-        <p class="text-muted small mb-3">
-            <?= htmlspecialchars($offre['entreprise_nom']) ?> • <?= htmlspecialchars($offre['siege_social'] ?? 'Douala') ?>
-        </p>
+   <div class="row g-4">
+    <?php if (count($offres) > 0): ?>
+        <?php foreach ($offres as $offre): 
+            // On prépare les initiales pour le logo (ex: AZUR -> AZ)
+            $initials = strtoupper(substr($offre['entreprise_nom'], 0, 2));
+            
+            // Vérification si déjà postulé (basé sur la colonne calculée dans ton SQL)
+            $estPostule = ($offre['deja_postule'] > 0);
+        ?>
+        <div class="col-xl-4 col-md-6" data-aos="fade-up">
+            <div class="card-offre">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="company-logo"><?= $initials ?></div>
+                    <span class="salary-tag">Stage</span>
+                </div>
+                
+                <h4 class="fw-bold mb-1"><?= htmlspecialchars($offre['titre']) ?></h4>
+                
+                <p class="text-muted small mb-3">
+                    <?= htmlspecialchars($offre['entreprise_nom']) ?> • <?= htmlspecialchars($offre['siege_social'] ?? 'Douala') ?>
+                </p>
 
-        <div class="mb-4">
-            <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> Offre <?= htmlspecialchars($offre['statut']) ?></span>
-            <span class="badge-custom"><i class="fa-solid fa-location-dot me-1"></i> Présentiel</span>
-        </div>
+                <div class="mb-4">
+                    <span class="badge-custom"><i class="fa-solid fa-clock me-1"></i> Offre <?= htmlspecialchars($offre['statut']) ?></span>
+                    <span class="badge-custom"><i class="fa-solid fa-location-dot me-1"></i> Présentiel</span>
+                </div>
 
-        <p class="small text-muted mb-4">
-            <?= nl2br(htmlspecialchars(substr($offre['description'], 0, 100))) ?>...
-        </p>
+                <p class="small text-muted mb-4">
+                    <?= nl2br(htmlspecialchars(substr($offre['description'], 0, 100))) ?>...
+                </p>
 
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <small class="text-muted">
-                <i class="fa-regular fa-calendar me-1"></i> 
-                Limite : <?= date('d/m/Y', strtotime($offre['date_limite'])) ?>
-            </small>
-        </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <small class="text-muted">
+                        <i class="fa-regular fa-calendar me-1"></i> 
+                        Limite : <?= date('d/m/Y', strtotime($offre['date_limite'])) ?>
+                    </small>
+                </div>
 
-       <button type="button" 
-        class="btn-apply text-center d-block w-100 border-0" 
-        onclick="postulerAjax(<?= $offre['id_offre'] ?>, this)">
-    Postuler maintenant
-</button>
-    </div>
-</div>
-<?php endforeach; ?>
-        <?php else: ?>
-            <div class="col-12 text-center py-5">
-                <i class="fa-solid fa-folder-open fa-3x text-muted mb-3"></i>
-                <p class="text-muted">Aucune offre disponible pour le moment.</p>
+                <?php if ($estPostule): ?>
+                    <button type="button" 
+                        class="btn btn-secondary w-100 border-0" 
+                        style="border-radius: 12px; padding: 12px; opacity: 0.7; cursor: not-allowed;" 
+                        disabled>
+                        <i class="fa-solid fa-check me-2"></i> Déjà postulé
+                    </button>
+                <?php else: ?>
+                    <button type="button" 
+                        class="btn-apply text-center d-block w-100 border-0" 
+                        onclick="postulerAjax(<?= $offre['id_offre'] ?>, this)">
+                        Postuler maintenant
+                    </button>
+                <?php endif; ?>
             </div>
-        <?php endif; ?>
-    </div>
+        </div>
+        <?php endforeach; ?>
+    <?php else: ?>
+        <div class="col-12 text-center py-5">
+            <i class="fa-solid fa-folder-open fa-3x text-muted mb-3"></i>
+            <p class="text-muted">Aucune offre disponible pour le moment.</p>
+        </div>
+    <?php endif; ?>
 </div>
 
 <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>

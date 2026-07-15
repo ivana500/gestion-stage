@@ -8,7 +8,7 @@ $pass = '';
 
 try {
     $pdo = new PDO(
-        "mysql:host=$host;dbname=$dbname;charset=utf8",
+        "mysql:host=$host;port=3307;dbname=$dbname;charset=utf8",
         $user,
         $pass,
         [

@@ -2,7 +2,9 @@
 session_start();
 include('../Auth/config_db.php');
 
-// 1. Vérification de la session de l'étudiant
+// Activer l'affichage des erreurs PDO pour déboguer
+$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../Auth/connexion.php');
     exit();
@@ -10,42 +12,33 @@ if (!isset($_SESSION['user_id'])) {
 
 $id_etudiant = $_SESSION['user_id'];
 
-// 2. Récupération du nom complet de l'étudiant connecté (id_user et nom_complet)
+// 2. Récupération utilisateur
 $stmt_user = $pdo->prepare("SELECT nom_complet FROM UTILISATEUR WHERE id_user = ?");
 $stmt_user->execute([$id_etudiant]);
 $user_info = $stmt_user->fetch(PDO::FETCH_ASSOC);
-
 $nom_complet = $user_info ? htmlspecialchars($user_info['nom_complet']) : "Étudiant";
 
-// 3. STATISTIQUE 1 : Nombre d'offres globales disponibles (statut 'ouverte')
-$stmt_offres = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte'");
-$total_offres_dispo = $stmt_offres->fetchColumn();
+// 3. Stats Offres
+$total_offres_dispo = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte'")->fetchColumn();
+$offres_cette_semaine = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte' AND date_limite >= CURDATE()")->fetchColumn();
 
-// Nombre d'offres ajoutées cette semaine
-$stmt_offres_semaine = $pdo->query("SELECT COUNT(*) FROM OFFRE_STAGE WHERE statut = 'ouverte' AND date_limite >= CURDATE()"); 
-// Note : Si tu n'as pas de champ "date_publication", on utilise un fallback ou on affiche 0 pour l'instant
-$offres_cette_semaine = $stmt_offres_semaine->fetchColumn();
-
-
-// 4. STATISTIQUE 2 : Nombre total de candidatures déposées par l'étudiant
+// 4. STATISTIQUE 2 : Compteur de candidatures
 $stmt_cand_total = $pdo->prepare("SELECT COUNT(*) FROM CANDIDATURE WHERE id_etudiant = ?");
 $stmt_cand_total->execute([$id_etudiant]);
 $total_mes_candidatures = $stmt_cand_total->fetchColumn();
 
-
-// 5. STATISTIQUE 3 : Vérifier si l'étudiant a un stage en cours ou à venir
+// 5. STATISTIQUE 3 : Stage en cours
 $stmt_stage_en_cours = $pdo->prepare("SELECT COUNT(*) FROM STAGE WHERE id_etudiant = ? AND statut_stage IN ('en_cours', 'a_venir')");
 $stmt_stage_en_cours->execute([$id_etudiant]);
 $stage_en_cours = $stmt_stage_en_cours->fetchColumn();
 
-
-// 6. TABLEAU : Récupération des 5 dernières candidatures conformes à ton SQL
-$sql_dernieres_cand = "SELECT c.id_candidature, c.date_postulation, c.statut_candidature, 
+// 6. TABLEAU : Utilisation de LEFT JOIN pour éviter les blocages de jointure
+$sql_dernieres_cand = "SELECT c.id_candidature, c.date_postulation AS date_depot, c.statut_candidature, 
                               o.titre, 
                               u.nom_complet AS nom_entreprise 
                        FROM CANDIDATURE c
-                       JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
-                       JOIN UTILISATEUR u ON o.id_entreprise = u.id_user
+                       LEFT JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+                       LEFT JOIN UTILISATEUR u ON o.id_entreprise = u.id_user
                        WHERE c.id_etudiant = ?
                        ORDER BY c.date_postulation DESC 
                        LIMIT 5";
@@ -53,6 +46,9 @@ $sql_dernieres_cand = "SELECT c.id_candidature, c.date_postulation, c.statut_can
 $stmt_liste = $pdo->prepare($sql_dernieres_cand);
 $stmt_liste->execute([$id_etudiant]);
 $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
+
+// DEBUG : Si le total est > 0 mais que le tableau est vide, décommentez la ligne ci-dessous :
+// var_dump($dernieres_candidatures); 
 ?>
 
 <!DOCTYPE html>
@@ -209,10 +205,12 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
         <a href="dashEtud.php" class="nav-link active"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
         <a href="listeStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Offres de stage</a>
         <a href="Candidature.php" class="nav-link"><i class="fa-solid fa-paper-plane"></i> Mes candidatures</a>
-        <a href="MonStage.php" class="nav-link"><i class="fa-solid fa-laptop-code"></i> Mon stage</a>
+        <a href="MonStage.php" class="nav-link"><i class="fa-solid fa-laptop-code"></i> Espace Documents</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
-        <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')"><i class="fa-solid fa-right-from-bracket"></i> Déconnexion</a>
-    </nav>
+<a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Déconnexion</span>
+</a>    </nav>
 </div>
 
 <div class="main-content">

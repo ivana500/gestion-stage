@@ -206,7 +206,11 @@ $candidatures = $stmt_list->fetchAll();
     <a href="dashEtud.php"><i class="fa-solid fa-grip-vertical"></i> Dashboard</a>
     <a href="listeStage.php"><i class="fa-solid fa-briefcase"></i> Offres de stage</a>
     <a href="Candidature.php" class="active"><i class="fa-solid fa-paper-plane"></i> Mes candidatures</a>
-    <a href="MonStage.php"><i class="fa-solid fa-file-arrow-up"></i> Dépôt de rapport</a>
+    <a href="MonStage.php"><i class="fa-solid fa-file-arrow-up"></i> Espace Documents</a>
+    <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Déconnexion</span>
+</a>
 </div>
 
 <div class="main">
