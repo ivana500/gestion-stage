@@ -21,4 +21,9 @@ try {
 } catch (PDOException $e) {
     die("Erreur de connexion à la base de données : " . $e->getMessage());
 }
+
+function notifier($pdo, $id_user, $message) {
+    $stmt = $pdo->prepare("INSERT INTO NOTIFICATIONS (id_user, message) VALUES (?, ?)");
+    $stmt->execute([$id_user, $message]);
+}
 ?>

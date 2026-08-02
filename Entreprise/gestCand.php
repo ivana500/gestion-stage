@@ -9,59 +9,43 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
 
 $id_ent = $_SESSION['user_id'];
 
+// --- GESTION DES ACTIONS ---
 if (isset($_GET['action']) && isset($_GET['id_cand'])) {
     $id_cand = (int)$_GET['id_cand'];
 
     if ($_GET['action'] === 'accepter') {
-        // L'entreprise ne modifie PLUS directement le statut de la candidature.
-        // Elle enregistre uniquement sa validation dans VALIDATION_ENTREPRISE.
-        // Le sous-select garantit que :
-        //   - la candidature appartient bien à cette entreprise (sécurité)
-        //   - la candidature est encore en_attente (on ne revalide pas une candidature refusée)
-        $sql1 = "INSERT IGNORE INTO VALIDATION_ENTREPRISE (id_candidature)
-                 SELECT c.id_candidature
-                 FROM CANDIDATURE c
+        // Validation par l'entreprise : passage au statut intermédiaire
+        $sql1 = "UPDATE CANDIDATURE c
                  JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
-                 WHERE c.id_candidature = ?
-                   AND o.id_entreprise = ?
+                 SET c.statut_candidature = 'valide_par_entreprise'
+                 WHERE c.id_candidature = ? 
+                   AND o.id_entreprise = ? 
                    AND c.statut_candidature = 'en_attente'";
         $pdo->prepare($sql1)->execute([$id_cand, $id_ent]);
-
     } elseif ($_GET['action'] === 'refuser') {
-        // Le refus reste une décision finale et immédiate de l'entreprise
         $sql1 = "UPDATE CANDIDATURE c
                  JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
                  SET c.statut_candidature = 'refusee'
                  WHERE c.id_candidature = ? AND o.id_entreprise = ?";
         $pdo->prepare($sql1)->execute([$id_cand, $id_ent]);
-
-        // On retire une éventuelle validation entreprise existante :
-        // un refus annule toute validation en cours
-        $pdo->prepare("DELETE FROM VALIDATION_ENTREPRISE WHERE id_candidature = ?")->execute([$id_cand]);
     }
-
     header('Location: gestCand.php');
     exit();
 }
 
 // --- RÉCUPÉRATION DES CANDIDATURES ---
-// LEFT JOIN sur VALIDATION_ENTREPRISE pour savoir si l'entreprise a déjà validé
 $sql = "SELECT c.*, u.nom_complet, u.email, u.telephone, u.adresse, u.created_at,
-               e.ville, o.titre as titre_offre, o.description as description_offre,
-               ve.id_candidature AS validation_entreprise
+               e.ville, o.titre as titre_offre, o.description as description_offre
         FROM CANDIDATURE c
         JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
         JOIN ETUDIANT e ON e.id_user = c.id_etudiant
         JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
-        LEFT JOIN VALIDATION_ENTREPRISE ve ON ve.id_candidature = c.id_candidature
         WHERE o.id_entreprise = ?
         ORDER BY c.date_postulation DESC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute([$id_ent]);
 $candidatures = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$total_candidats = count($candidatures);
 ?>
 
 <!DOCTYPE html>

@@ -17,13 +17,7 @@ $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['user_role'];
 
 // 3. Connexion à la Base de données (Port 3307) - UNIQUE ET MUTUALISÉE
-try {
-    $pdo = new PDO("mysql:host=localhost;port=3307;dbname=gestion_stages;charset=utf8mb4", "root", "");
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-} catch (PDOException $e) {
-    die("Erreur de connexion : " . $e->getMessage());
-}
-
+include('../Auth/config_db.php');
 // 4. Filtrer le nombre d'étudiants selon le rôle (Admin vs Enseignant/Sous-Admin)
 if ($user_role === 'admin') {
     // Le Super Admin voit le total global
@@ -121,6 +115,8 @@ for ($i = 5; $i >= 0; $i--) {
 $roleEtudiants = $totalEtudiants; // Filtre par rôle respecté
 $roleEntreprises = $roleEntreprises ?? $totalEntreprises;
 $roleAdmins = (int) $pdo->query("SELECT COUNT(*) FROM UTILISATEUR WHERE role = 'admin'")->fetchColumn();
+
+
 ?>
 <!DOCTYPE html>
 <html lang="fr">
