@@ -90,6 +90,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_FILES['rapport']) || isset
                                 FROM stage s WHERE s.id_stage = ?")
                     ->execute([$id_stage]);
 
+                // Notification pour l'administrateur (rôle unique, tous droits)
+                $pdo->prepare("INSERT INTO notifications (id_user, type, id_stage, message)
+                                SELECT id_user, 'rapport', ?, 'Rapport de stage reçu'
+                                FROM utilisateur WHERE role = 'admin'")
+                    ->execute([$id_stage]);
+
             } else {
                 if ($document_cv_lettre) {
                     $pdo->prepare("UPDATE documents_stage SET chemin_fichier = ?, date_upload = NOW() WHERE id = ?")
@@ -107,6 +113,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_FILES['rapport']) || isset
                                 SELECT o.id_entreprise, 'documents_candidature', c.id_candidature, 'Documents de candidature reçus'
                                 FROM CANDIDATURE c JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
                                 WHERE c.id_candidature = ?")
+                    ->execute([$cand['id_candidature']]);
+
+                // Notification pour l'administrateur (rôle unique, tous droits)
+                $pdo->prepare("INSERT INTO notifications (id_user, type, id_candidature, message)
+                                SELECT id_user, 'documents_candidature', ?, 'Documents de candidature reçus'
+                                FROM utilisateur WHERE role = 'admin'")
                     ->execute([$cand['id_candidature']]);
             }
 
