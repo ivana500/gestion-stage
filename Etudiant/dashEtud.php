@@ -12,6 +12,55 @@ if (!isset($_SESSION['user_id'])) {
 
 $id_etudiant = $_SESSION['user_id'];
 
+// Petit helper : reconstruit un chemin utilisable vers un fichier stocké en base
+// (même logique que dans Entreprise/dashEnt.php et Admin/dash.php)
+function resolveFilePath($raw, $defaultFolder) {
+    if (empty($raw)) return null;
+    if (strpos($raw, '/') !== false) {
+        return '../' . ltrim($raw, '/');
+    }
+    return $defaultFolder . $raw;
+}
+
+// ============================================================
+// NOTIFICATIONS NON LUES : uniquement "convention disponible"
+// (les dépôts de documents/rapport concernent l'entreprise et l'admin,
+// pas l'étudiant lui-même)
+// ============================================================
+$stmtNotifs = $pdo->prepare("SELECT id, type, message, lu, date_creation, id_stage
+                              FROM notifications
+                              WHERE id_user = ? AND lu = 0 AND type = 'convention_disponible'
+                              ORDER BY date_creation DESC");
+$stmtNotifs->execute([$id_etudiant]);
+$notifications_brutes = $stmtNotifs->fetchAll(PDO::FETCH_ASSOC);
+
+$notifications = [];
+foreach ($notifications_brutes as $n) {
+    if (!$n['id_stage']) continue;
+
+    // Sécurité : le stage doit bien appartenir à cet étudiant
+    $stmtCheck = $pdo->prepare("SELECT s.id_stage FROM STAGE s WHERE s.id_stage = ? AND s.id_etudiant = ?");
+    $stmtCheck->execute([$n['id_stage'], $id_etudiant]);
+    if (!$stmtCheck->fetch()) continue;
+
+    $stmtConv = $pdo->prepare("SELECT fichier_pdf FROM convention WHERE id_stage = ? ORDER BY id_convention DESC LIMIT 1");
+    $stmtConv->execute([$n['id_stage']]);
+    $conv = $stmtConv->fetch(PDO::FETCH_ASSOC);
+
+    $fichiers = [];
+    if ($conv) {
+        $fichiers[] = ['label' => 'Convention de stage', 'url' => resolveFilePath($conv['fichier_pdf'], '../uploads/conventions/')];
+    }
+
+    $notifications[] = [
+        'id' => $n['id'],
+        'texte' => 'Votre convention de stage est disponible',
+        'date' => $n['date_creation'],
+        'fichiers' => $fichiers,
+    ];
+}
+$nb_notifs = count($notifications);
+
 // 2. Récupération utilisateur
 $stmt_user = $pdo->prepare("SELECT nom_complet FROM UTILISATEUR WHERE id_user = ?");
 $stmt_user->execute([$id_etudiant]);
@@ -179,6 +228,84 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
 
         .badge { border-radius: 6px; padding: 6px 12px; font-weight: 500; }
 
+        /* ---- NOTIFICATIONS ---- */
+        .notif-bell-wrap { position: relative; }
+        .notif-bell-btn {
+            width: 46px; height: 46px; border-radius: 50%;
+            background: var(--card-dark); border: 1px solid rgba(255,255,255,0.08);
+            color: white; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; position: relative;
+        }
+        .notif-badge {
+            position: absolute; top: -4px; right: -4px;
+            background: #ef4444; color: white; font-size: 0.65rem; font-weight: 700;
+            border-radius: 50%; width: 20px; height: 20px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .notif-panel {
+            display: none;
+            position: absolute; top: 60px; right: 0;
+            width: 340px; max-height: 460px; overflow-y: auto;
+            background: var(--card-dark); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px; box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+            z-index: 1000; padding: 0;
+        }
+        .notif-panel-header {
+            padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .notif-panel-header h5 { margin: 0; font-size: 0.95rem; font-weight: 700; }
+        .notif-item {
+            display: block; padding: 14px 18px; cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            background: rgba(16,185,129,0.08);
+        }
+        .notif-item:hover { background: rgba(16,185,129,0.16); }
+        .notif-item .texte { font-weight: 600; font-size: 0.85rem; }
+        .notif-item .date { color: #5b5f70; font-size: 0.7rem; margin-top: 6px; }
+        .notif-empty { padding: 30px 18px; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+
+        .doc-view {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 9999;
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(4px);
+            padding: 40px 20px;
+            overflow-y: auto;
+        }
+        .doc-view-inner {
+            background: var(--card-dark);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 25px;
+            max-width: 800px;
+            margin: 0 auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .doc-view-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 20px; padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .doc-view-header h4 { margin: 0; font-size: 1.1rem; }
+        .btn-back {
+            background: transparent; border: 1px solid rgba(255,255,255,0.15);
+            color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.05); }
+        .doc-file-block { margin-bottom: 22px; }
+        .doc-file-block .doc-label {
+            font-weight: 600; font-size: 0.85rem; margin-bottom: 8px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .doc-file-block iframe {
+            width: 100%; height: 420px; border: none; border-radius: 10px; background: white;
+        }
+        .doc-file-block a.doc-download { color: var(--accent-blue); font-size: 0.78rem; text-decoration: none; }
+
     </style>
 </head>
 <body>
@@ -214,15 +341,70 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <div class="main-content">
-    <div class="d-flex justify-content-between align-items-center mb-5 fade-in">
+    <div class="d-flex justify-content-between align-items-center mb-5 fade-in" style="position: relative; z-index: 50;">
         <div>
             <h2 class="fw-bold mb-1">Bienvenue 👋</h2>
             <p class="text-muted mb-0">Ravi de vous revoir ! Voici le point sur vos recherches.</p>
         </div>
-        <div class="text-end">
+        <div class="d-flex align-items-center gap-3">
+            <div class="notif-bell-wrap">
+                <button class="notif-bell-btn" onclick="toggleNotifPanel()" type="button">
+                    <i class="fa-solid fa-bell"></i>
+                    <?php if ($nb_notifs > 0): ?>
+                        <span class="notif-badge"><?= $nb_notifs > 9 ? '9+' : $nb_notifs ?></span>
+                    <?php endif; ?>
+                </button>
+                <div id="notifPanel" class="notif-panel">
+                    <div class="notif-panel-header">
+                        <h5>Notifications</h5>
+                        <button class="btn-back" style="padding:4px 10px;" onclick="toggleNotifPanel()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <?php if (empty($notifications)): ?>
+                        <div class="notif-empty">Aucune notification pour le moment.</div>
+                    <?php else: foreach ($notifications as $n): ?>
+                        <div class="notif-item" onclick="showDoc(<?= (int)$n['id'] ?>)">
+                            <div class="texte"><?= htmlspecialchars($n['texte']) ?></div>
+                            <div class="date"><?= date('d/m/Y à H:i', strtotime($n['date'])) ?></div>
+                        </div>
+                    <?php endforeach; endif; ?>
+                </div>
+            </div>
             <span class="badge bg-dark text-muted border border-secondary">Année académique 2025/2026</span>
         </div>
     </div>
+
+    <!-- VUES DOCUMENTS (une par notification, cachées par défaut) -->
+    <?php foreach ($notifications as $n): ?>
+        <div id="docView_<?= (int)$n['id'] ?>" class="doc-view">
+            <div class="doc-view-inner">
+                <div class="doc-view-header">
+                    <h4>Ma convention de stage</h4>
+                    <button class="btn-back" onclick="backToNotifs()">
+                        <i class="fa-solid fa-arrow-left me-2"></i>Retour aux notifications
+                    </button>
+                </div>
+                <?php if (empty($n['fichiers'])): ?>
+                    <p class="text-muted">Fichier introuvable pour le moment.</p>
+                <?php else: foreach ($n['fichiers'] as $f): ?>
+                    <div class="doc-file-block">
+                        <div class="doc-label">
+                            <span><?= htmlspecialchars($f['label']) ?></span>
+                            <?php if ($f['url']): ?>
+                                <a class="doc-download" href="<?= htmlspecialchars($f['url']) ?>" target="_blank">
+                                    <i class="fa-solid fa-up-right-from-square me-1"></i> Ouvrir dans un nouvel onglet
+                                </a>
+                            <?php endif; ?>
+                        </div>
+                        <?php if ($f['url']): ?>
+                            <iframe src="<?= htmlspecialchars($f['url']) ?>"></iframe>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; endif; ?>
+            </div>
+        </div>
+    <?php endforeach; ?>
 
     <div class="row g-4 mb-5">
         <div class="col-md-4 fade-in">
@@ -332,6 +514,41 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
         <p>&copy; 2026 Gestion des Stages - Université de Technologie. Tous droits réservés.</p>
     </footer>
 </div>
+
+<!-- Manquant avant : sans ce script, aucun composant Bootstrap interactif (dont la cloche de notifications) ne fonctionne -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+    function toggleNotifPanel() {
+        const panel = document.getElementById('notifPanel');
+        panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
+    }
+
+    function showDoc(notifId) {
+        document.getElementById('notifPanel').style.display = 'none';
+        document.querySelectorAll('.doc-view').forEach(el => el.style.display = 'none');
+
+        const view = document.getElementById('docView_' + notifId);
+        if (view) {
+            view.style.display = 'block';
+            view.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        fetch('marquer_notif_lue.php?id=' + notifId).catch(() => {});
+    }
+
+    function backToNotifs() {
+        document.querySelectorAll('.doc-view').forEach(el => el.style.display = 'none');
+        document.getElementById('notifPanel').style.display = 'block';
+    }
+
+    document.addEventListener('click', function (e) {
+        const wrap = document.querySelector('.notif-bell-wrap');
+        if (wrap && !wrap.contains(e.target)) {
+            document.getElementById('notifPanel').style.display = 'none';
+        }
+    });
+</script>
 
 </body>
 </html>
