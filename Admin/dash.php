@@ -121,25 +121,29 @@ $roleAdmins = (int) $pdo->query("SELECT COUNT(*) FROM UTILISATEUR WHERE role = '
 
 
 // ============================================================
-// NOTIFICATIONS NON LUES (documents de candidature OU rapport)
-// Même logique que Entreprise/dashEnt.php : un seul rôle admin,
-// donc aucun filtrage supplémentaire par droits/assignation.
+// NOTIFICATIONS (toutes, avec état lu/non lu)
 // ============================================================
-$stmtNotifs = $pdo->prepare("SELECT id, type, message, lu, date_creation, id_candidature, id_stage
-                              FROM notifications
-                              WHERE id_user = ? AND lu = 0
-                              ORDER BY date_creation DESC");
+$stmtNotifs = $pdo->prepare("
+    SELECT id, type, message, lu, date_creation, id_candidature, id_stage
+    FROM notifications
+    WHERE id_user = ?
+    ORDER BY date_creation DESC
+");
 $stmtNotifs->execute([$user_id]);
 $notifications_brutes = $stmtNotifs->fetchAll(PDO::FETCH_ASSOC);
 
 $notifications = [];
+$nb_notifs = 0; // seulement les notifications NON lues
+
 foreach ($notifications_brutes as $n) {
 
     if ($n['type'] === 'documents_candidature' && $n['id_candidature']) {
-        $stmtCheck = $pdo->prepare("SELECT u.nom_complet
-                                     FROM CANDIDATURE c
-                                     JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
-                                     WHERE c.id_candidature = ?");
+        $stmtCheck = $pdo->prepare("
+            SELECT u.nom_complet
+            FROM CANDIDATURE c
+            JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
+            WHERE c.id_candidature = ?
+        ");
         $stmtCheck->execute([$n['id_candidature']]);
         $info = $stmtCheck->fetch(PDO::FETCH_ASSOC);
         if (!$info) continue;
@@ -147,6 +151,7 @@ foreach ($notifications_brutes as $n) {
         $stmtDocs = $pdo->prepare("SELECT type_document, chemin_fichier FROM documents_stage WHERE id_candidature = ?");
         $stmtDocs->execute([$n['id_candidature']]);
         $fichiers = [];
+
         foreach ($stmtDocs->fetchAll(PDO::FETCH_ASSOC) as $d) {
             $label = match (strtolower($d['type_document'])) {
                 'cv' => 'CV',
@@ -154,22 +159,33 @@ foreach ($notifications_brutes as $n) {
                 'cv_lettre' => 'CV + Lettre de motivation',
                 default => ucfirst($d['type_document']),
             };
-            $fichiers[] = ['label' => $label, 'url' => resolveFilePath($d['chemin_fichier'], '../uploads/documents/')];
+
+            $fichiers[] = [
+                'label' => $label,
+                'url' => resolveFilePath($d['chemin_fichier'], '../uploads/documents/')
+            ];
+        }
+
+        if ((int)$n['lu'] === 0) {
+            $nb_notifs++;
         }
 
         $notifications[] = [
-            'id' => $n['id'],
+            'id' => (int)$n['id'],
             'nom_etudiant' => $info['nom_complet'],
             'texte' => 'a déjà envoyé sa lettre de motivation et son CV',
             'date' => $n['date_creation'],
             'fichiers' => $fichiers,
+            'lu' => (int)$n['lu'],
         ];
 
     } elseif ($n['type'] === 'rapport' && $n['id_stage']) {
-        $stmtCheck = $pdo->prepare("SELECT u.nom_complet
-                                     FROM STAGE s
-                                     JOIN UTILISATEUR u ON s.id_etudiant = u.id_user
-                                     WHERE s.id_stage = ?");
+        $stmtCheck = $pdo->prepare("
+            SELECT u.nom_complet
+            FROM STAGE s
+            JOIN UTILISATEUR u ON s.id_etudiant = u.id_user
+            WHERE s.id_stage = ?
+        ");
         $stmtCheck->execute([$n['id_stage']]);
         $info = $stmtCheck->fetch(PDO::FETCH_ASSOC);
         if (!$info) continue;
@@ -180,19 +196,26 @@ foreach ($notifications_brutes as $n) {
 
         $fichiers = [];
         if ($rap) {
-            $fichiers[] = ['label' => 'Rapport de stage', 'url' => resolveFilePath($rap['fichier_pdf'], '../uploads/rapports/')];
+            $fichiers[] = [
+                'label' => 'Rapport de stage',
+                'url' => resolveFilePath($rap['fichier_pdf'], '../uploads/rapports/')
+            ];
+        }
+
+        if ((int)$n['lu'] === 0) {
+            $nb_notifs++;
         }
 
         $notifications[] = [
-            'id' => $n['id'],
+            'id' => (int)$n['id'],
             'nom_etudiant' => $info['nom_complet'],
             'texte' => 'a déjà envoyé son rapport de stage',
             'date' => $n['date_creation'],
             'fichiers' => $fichiers,
+            'lu' => (int)$n['lu'],
         ];
     }
 }
-$nb_notifs = count($notifications);
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -368,6 +391,19 @@ $nb_notifs = count($notifications);
             border-bottom: 1px solid rgba(255,255,255,0.04);
             background: rgba(59,130,246,0.06);
         }
+        .notif-item.notif-read {
+            background: rgba(15, 23, 42, 0.75);
+            opacity: 0.8;
+        }
+        .notif-item.notif-read:hover {
+            background: rgba(15, 23, 42, 0.9);
+        }
+        .notif-item.notif-read .nom {
+            color: #cbd5e1;
+        }
+        .notif-item.notif-read .texte {
+            color: #64748b;
+        }
         .notif-item:hover { background: rgba(59,130,246,0.14); }
         .notif-item .nom { font-weight: 600; font-size: 0.85rem; }
         .notif-item .texte { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
@@ -428,7 +464,7 @@ $nb_notifs = count($notifications);
         <a href="dash.php" class="nav-link active"><i class="fa-solid fa-chart-pie"></i> Dashboard</a>
         <a href="gestUtil.php" class="nav-link"><i class="fa-solid fa-users-gears"></i> Utilisateurs</a>
         <a href="validStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
-        <a href="Config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
+        <a href="config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
         <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
             <i class="fa-solid fa-right-from-bracket"></i>
             <span>Déconnexion</span>
@@ -448,9 +484,9 @@ $nb_notifs = count($notifications);
             <div class="notif-bell-wrap">
                 <button class="notif-bell-btn" onclick="toggleNotifPanel()" type="button">
                     <i class="fa-solid fa-bell"></i>
-                    <?php if ($nb_notifs > 0): ?>
-                        <span class="notif-badge"><?= $nb_notifs > 9 ? '9+' : $nb_notifs ?></span>
-                    <?php endif; ?>
+                    <span id="notifBadge" class="notif-badge" style="display: <?= $nb_notifs > 0 ? 'flex' : 'none' ?>;">
+                        <?= $nb_notifs > 9 ? '9+' : $nb_notifs ?>
+                    </span>
                 </button>
 
                 <div id="notifPanel" class="notif-panel">
@@ -463,7 +499,7 @@ $nb_notifs = count($notifications);
                     <?php if (empty($notifications)): ?>
                         <div class="notif-empty">Aucune notification pour le moment.</div>
                     <?php else: foreach ($notifications as $n): ?>
-                        <div class="notif-item" onclick="showDoc(<?= (int)$n['id'] ?>)">
+                        <div class="notif-item <?= (int)$n['lu'] === 1 ? 'notif-read' : '' ?>" onclick="showDoc(<?= (int)$n['id'] ?>)">
                             <div class="nom"><?= htmlspecialchars($n['nom_etudiant']) ?></div>
                             <div class="texte">L'étudiant <?= htmlspecialchars($n['texte']) ?></div>
                             <div class="date"><?= date('d/m/Y à H:i', strtotime($n['date'])) ?></div>
@@ -689,6 +725,21 @@ new Chart(document.getElementById('typeDonut'), {
 </script>
 
 <script>
+    let unreadNotifCount = <?= (int)$nb_notifs ?>;
+
+    function updateBellBadge() {
+        const badge = document.getElementById('notifBadge');
+        if (!badge) return;
+
+        if (unreadNotifCount > 0) {
+            badge.textContent = unreadNotifCount > 9 ? '9+' : unreadNotifCount;
+            badge.style.display = 'flex';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
+    }
+
     function toggleNotifPanel() {
         const panel = document.getElementById('notifPanel');
         panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
@@ -704,7 +755,15 @@ new Chart(document.getElementById('typeDonut'), {
             view.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        fetch('marquer_notif_lue.php?id=' + notifId).catch(() => {});
+        fetch('marquer_notif_lue.php?id=' + notifId)
+            .then(response => response.json())
+            .then(data => {
+                if (data && typeof data.remaining_unread !== 'undefined') {
+                    unreadNotifCount = Number(data.remaining_unread) || 0;
+                    updateBellBadge();
+                }
+            })
+            .catch(() => {});
     }
 
     function backToNotifs() {
@@ -718,6 +777,8 @@ new Chart(document.getElementById('typeDonut'), {
             document.getElementById('notifPanel').style.display = 'none';
         }
     });
+
+    updateBellBadge();
 </script>
 
 </body>

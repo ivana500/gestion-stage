@@ -21,9 +21,42 @@ $user_role = $_SESSION['user_role'];
 // ============================================================
 // GÉNÉRATION DU PDF (déclenchée si ?id_stage=... est présent dans l'URL)
 // ============================================================
-if (isset($_GET['id_stage'])) {
+$id_stage = isset($_GET['id_stage']) ? (int) $_GET['id_stage'] : 0;
+$id_candidature = isset($_GET['id_candidature']) ? (int) $_GET['id_candidature'] : 0;
 
-    $id_stage = (int) $_GET['id_stage'];
+if (!$id_stage && $id_candidature) {
+    $stageInfo = $pdo->prepare("
+        SELECT c.id_etudiant, c.id_offre, o.id_entreprise
+        FROM candidature c
+        JOIN offre_stage o ON o.id_offre = c.id_offre
+        WHERE c.id_candidature = ?
+    ");
+    $stageInfo->execute([$id_candidature]);
+    $stageData = $stageInfo->fetch(PDO::FETCH_ASSOC);
+
+    if ($stageData) {
+        $checkStage = $pdo->prepare("SELECT id_stage FROM stage WHERE id_etudiant = ? AND id_offre = ? LIMIT 1");
+        $checkStage->execute([$stageData['id_etudiant'], $stageData['id_offre']]);
+        $existingStage = $checkStage->fetch(PDO::FETCH_ASSOC);
+
+        if ($existingStage) {
+            $id_stage = (int) $existingStage['id_stage'];
+        } else {
+            $insertStage = $pdo->prepare("
+                INSERT INTO stage (id_etudiant, id_entreprise, id_offre, date_debut, date_fin, statut_stage)
+                VALUES (?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), 'a_venir')
+            ");
+            $insertStage->execute([
+                $stageData['id_etudiant'],
+                $stageData['id_entreprise'],
+                $stageData['id_offre']
+            ]);
+            $id_stage = (int) $pdo->lastInsertId();
+        }
+    }
+}
+
+if ($id_stage) {
 
     // Sécurité : le stage doit exister, et pour un sous-admin, l'étudiant doit lui être assigné
     $sql = "SELECT s.*,
@@ -167,7 +200,17 @@ if ($user_role === 'admin') {
                u_etud.nom_complet AS nom_etudiant,
                u_ent.nom_complet AS nom_entreprise,
                o.titre AS titre_offre,
-               conv.id_convention
+               conv.id_convention,
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM convention c
+                   JOIN stage s2 ON s2.id_stage = c.id_stage
+                   WHERE s2.id_etudiant = s.id_etudiant
+                     AND s2.id_entreprise = s.id_entreprise
+                     AND s2.date_debut = s.date_debut
+                     AND s2.date_fin = s.date_fin
+                     AND s2.id_stage <> s.id_stage
+               ) THEN 1 ELSE 0 END AS convention_period_exists
         FROM stage s
         JOIN utilisateur u_etud ON s.id_etudiant = u_etud.id_user
         JOIN utilisateur u_ent ON s.id_entreprise = u_ent.id_user
@@ -182,7 +225,17 @@ if ($user_role === 'admin') {
                u_etud.nom_complet AS nom_etudiant,
                u_ent.nom_complet AS nom_entreprise,
                o.titre AS titre_offre,
-               conv.id_convention
+               conv.id_convention,
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM convention c
+                   JOIN stage s2 ON s2.id_stage = c.id_stage
+                   WHERE s2.id_etudiant = s.id_etudiant
+                     AND s2.id_entreprise = s.id_entreprise
+                     AND s2.date_debut = s.date_debut
+                     AND s2.date_fin = s.date_fin
+                     AND s2.id_stage <> s.id_stage
+               ) THEN 1 ELSE 0 END AS convention_period_exists
         FROM stage s
         JOIN utilisateur u_etud ON s.id_etudiant = u_etud.id_user
         JOIN utilisateur u_ent ON s.id_entreprise = u_ent.id_user
@@ -279,7 +332,7 @@ if ($user_role === 'admin') {
         <a href="gestUtil.php" class="nav-link"><i class="fa-solid fa-users-gears"></i> Utilisateurs</a>
         <a href="validStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
         <a href="generate_convention.php" class="nav-link active"><i class="fa-solid fa-file-signature"></i> Conventions</a>
-        <a href="Config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
+        <a href="config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
         <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
             <i class="fa-solid fa-right-from-bracket"></i><span>Déconnexion</span>
         </a>
@@ -301,6 +354,7 @@ if ($user_role === 'admin') {
                         <th>Entreprise</th>
                         <th>Offre</th>
                         <th>Période</th>
+                        <th>Convention</th>
                         <th>Statut</th>
                         <th class="text-end">Action</th>
                     </tr>
@@ -318,12 +372,25 @@ if ($user_role === 'admin') {
                                 →
                                 <?= $s['date_fin'] ? date('d/m/Y', strtotime($s['date_fin'])) : '—' ?>
                             </td>
+                            <td>
+                                <?php if ($s['id_convention']): ?>
+                                    <span class="badge bg-success bg-opacity-25 text-success"><?= htmlspecialchars($s['nom_etudiant']) ?></span>
+                                <?php elseif ($s['convention_period_exists']): ?>
+                                    <span class="badge bg-secondary bg-opacity-25 text-light">Déjà générée</span>
+                                <?php else: ?>
+                                    <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
                             <td><span class="badge bg-primary bg-opacity-25 text-info"><?= htmlspecialchars($s['statut_stage']) ?></span></td>
                             <td class="text-end">
                                 <?php if ($s['id_convention']): ?>
                                     <a href="generate_convention.php?id_stage=<?= $s['id_stage'] ?>" target="_blank" class="btn-view">
                                         <i class="fa-solid fa-eye me-2"></i> Revoir / Réimprimer
                                     </a>
+                                <?php elseif ($s['convention_period_exists']): ?>
+                                    <button type="button" class="btn-view" disabled>
+                                        <i class="fa-solid fa-ban me-2"></i> Désactivé
+                                    </button>
                                 <?php else: ?>
                                     <a href="generate_convention.php?id_stage=<?= $s['id_stage'] ?>" target="_blank" class="btn-generate">
                                         <i class="fa-solid fa-file-pdf me-2"></i> Générer & Imprimer

@@ -53,6 +53,35 @@ if (isset($_GET['validate_candidature_id'])) {
         if ($is_allowed) {
             $stmt = $pdo->prepare("UPDATE CANDIDATURE SET statut_candidature = 'acceptee' WHERE id_candidature = ?");
             $stmt->execute([$id_cand]);
+
+            // Création du stage associé à la candidature acceptée, si aucun stage n'existe déjà.
+            $stageInfo = $pdo->prepare("
+                SELECT c.id_etudiant, c.id_offre, o.id_entreprise
+                FROM CANDIDATURE c
+                JOIN OFFRE_STAGE o ON o.id_offre = c.id_offre
+                WHERE c.id_candidature = ?
+            ");
+            $stageInfo->execute([$id_cand]);
+            $stageData = $stageInfo->fetch(PDO::FETCH_ASSOC);
+
+            if ($stageData) {
+                $checkStage = $pdo->prepare("SELECT id_stage FROM STAGE WHERE id_etudiant = ? AND id_offre = ? LIMIT 1");
+                $checkStage->execute([$stageData['id_etudiant'], $stageData['id_offre']]);
+                $existingStage = $checkStage->fetch(PDO::FETCH_ASSOC);
+
+                if (!$existingStage) {
+                    $insertStage = $pdo->prepare("
+                        INSERT INTO STAGE (id_etudiant, id_entreprise, id_offre, date_debut, date_fin, statut_stage)
+                        VALUES (?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), 'a_venir')
+                    ");
+                    $insertStage->execute([
+                        $stageData['id_etudiant'],
+                        $stageData['id_entreprise'],
+                        $stageData['id_offre']
+                    ]);
+                }
+            }
+
             $message = "Le stage a été validé avec succès !";
             $messageType = "success";
         } else {
@@ -136,40 +165,58 @@ if ($user_role === 'admin') {
 $candidatures = $queryCandidatures->fetchAll(PDO::FETCH_ASSOC);
 
 // ============================================================
-// 6. RÉCUPÉRATION DES CONVENTIONS DE STAGE (FILTRÉES)
+// 6. RÉCUPÉRATION DES DOCUMENTS ENVOYÉS (CV / LETTRE)
 // ============================================================
 try {
     if ($user_role === 'admin') {
-        $queryConventions = $pdo->query("
-            SELECT conv.id_convention, 
-                   conv.fichier_pdf AS convention_fichier, 
-                   conv.date_signature,
-                   u_etud.nom_complet AS nom_etudiant
-            FROM CONVENTION conv
-            JOIN CANDIDATURE c ON conv.id_stage = c.id_candidature
+        $queryDocuments = $pdo->query("
+            SELECT ds.id,
+                   ds.type_document,
+                   ds.chemin_fichier,
+                   ds.date_upload,
+                   c.id_candidature,
+                   u_etud.nom_complet AS nom_etudiant,
+                   s.id_stage
+            FROM documents_stage ds
+            JOIN CANDIDATURE c ON ds.id_candidature = c.id_candidature
+            JOIN ETUDIANT etud ON c.id_etudiant = etud.id_user
             JOIN UTILISATEUR u_etud ON c.id_etudiant = u_etud.id_user
-            ORDER BY conv.date_signature DESC 
+            LEFT JOIN (
+                SELECT MAX(id_stage) AS id_stage, id_etudiant, id_offre
+                FROM STAGE
+                GROUP BY id_etudiant, id_offre
+            ) s ON s.id_etudiant = c.id_etudiant AND s.id_offre = c.id_offre
+            WHERE c.statut_candidature = 'acceptee'
+            ORDER BY ds.date_upload DESC
             LIMIT 10
         ");
     } else {
-        $queryConventions = $pdo->prepare("
-            SELECT conv.id_convention, 
-                   conv.fichier_pdf AS convention_fichier, 
-                   conv.date_signature,
-                   u_etud.nom_complet AS nom_etudiant
-            FROM CONVENTION conv
-            JOIN CANDIDATURE c ON conv.id_stage = c.id_candidature
+        $queryDocuments = $pdo->prepare("
+            SELECT ds.id,
+                   ds.type_document,
+                   ds.chemin_fichier,
+                   ds.date_upload,
+                   c.id_candidature,
+                   u_etud.nom_complet AS nom_etudiant,
+                   s.id_stage
+            FROM documents_stage ds
+            JOIN CANDIDATURE c ON ds.id_candidature = c.id_candidature
             JOIN ETUDIANT etud ON c.id_etudiant = etud.id_user
             JOIN UTILISATEUR u_etud ON c.id_etudiant = u_etud.id_user
-            WHERE etud.id_enseignant = ?
-            ORDER BY conv.date_signature DESC 
+            LEFT JOIN (
+                SELECT MAX(id_stage) AS id_stage, id_etudiant, id_offre
+                FROM STAGE
+                GROUP BY id_etudiant, id_offre
+            ) s ON s.id_etudiant = c.id_etudiant AND s.id_offre = c.id_offre
+            WHERE c.statut_candidature = 'acceptee' AND etud.id_enseignant = ?
+            ORDER BY ds.date_upload DESC
             LIMIT 10
         ");
-        $queryConventions->execute([$user_id]);
+        $queryDocuments->execute([$user_id]);
     }
-    $conventions = $queryConventions->fetchAll(PDO::FETCH_ASSOC);
+    $documents = $queryDocuments->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    $conventions = [];
+    $documents = [];
 }
 
 // ============================================================
@@ -178,20 +225,20 @@ try {
 try {
     if ($user_role === 'admin') {
         $queryRapports = $pdo->query("
-            SELECT r.id_rapport, 
-                   r.fichier_pdf AS rapport_fichier, 
+            SELECT r.id_rapport,
+                   r.fichier_pdf AS rapport_fichier,
                    r.date_depot AS date_rapport_depot,
                    u_etud.nom_complet AS nom_etudiant
             FROM RAPPORT r
             JOIN STAGE s ON r.id_stage = s.id_stage
             JOIN UTILISATEUR u_etud ON s.id_etudiant = u_etud.id_user
-            ORDER BY r.date_depot DESC 
+            ORDER BY r.date_depot DESC
             LIMIT 10
         ");
     } else {
         $queryRapports = $pdo->prepare("
-            SELECT r.id_rapport, 
-                   r.fichier_pdf AS rapport_fichier, 
+            SELECT r.id_rapport,
+                   r.fichier_pdf AS rapport_fichier,
                    r.date_depot AS date_rapport_depot,
                    u_etud.nom_complet AS nom_etudiant
             FROM RAPPORT r
@@ -199,47 +246,57 @@ try {
             JOIN ETUDIANT etud ON s.id_etudiant = etud.id_user
             JOIN UTILISATEUR u_etud ON s.id_etudiant = u_etud.id_user
             WHERE etud.id_enseignant = ?
-            ORDER BY r.date_depot DESC 
+            ORDER BY r.date_depot DESC
             LIMIT 10
         ");
         $queryRapports->execute([$user_id]);
     }
     $rapports = $queryRapports->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    // Alternative via la table CANDIDATURE en cas de structure différente
-    try {
-        if ($user_role === 'admin') {
-            $queryRapports = $pdo->query("
-                SELECT r.id_rapport, 
-                       r.fichier_pdf AS rapport_fichier, 
-                       r.date_depot AS date_rapport_depot,
-                       u_etud.nom_complet AS nom_etudiant
-                FROM RAPPORT r
-                JOIN CANDIDATURE c ON r.id_stage = c.id_candidature
-                JOIN UTILISATEUR u_etud ON c.id_etudiant = u_etud.id_user
-                ORDER BY r.date_depot DESC 
-                LIMIT 10
-            ");
-        } else {
-            $queryRapports = $pdo->prepare("
-                SELECT r.id_rapport, 
-                       r.fichier_pdf AS rapport_fichier, 
-                       r.date_depot AS date_rapport_depot,
-                       u_etud.nom_complet AS nom_etudiant
-                FROM RAPPORT r
-                JOIN CANDIDATURE c ON r.id_stage = c.id_candidature
-                JOIN ETUDIANT etud ON c.id_etudiant = etud.id_user
-                JOIN UTILISATEUR u_etud ON c.id_etudiant = u_etud.id_user
-                WHERE etud.id_enseignant = ?
-                ORDER BY r.date_depot DESC 
-                LIMIT 10
-            ");
-            $queryRapports->execute([$user_id]);
-        }
-        $rapports = $queryRapports->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $ex) {
-        $rapports = [];
+    $rapports = [];
+}
+
+// ============================================================
+// 8. RÉCUPÉRATION DES CONVENTIONS GÉNÉRÉES (FILTRÉES)
+// ============================================================
+try {
+    if ($user_role === 'admin') {
+        $queryConventions = $pdo->query("
+            SELECT c.id_convention,
+                   c.fichier_pdf,
+                   c.id_stage,
+                   u_etud.nom_complet AS nom_etudiant,
+                   u_entr.nom_complet AS nom_entreprise,
+                   s.date_debut,
+                   s.date_fin
+            FROM convention c
+            JOIN stage s ON c.id_stage = s.id_stage
+            JOIN utilisateur u_etud ON s.id_etudiant = u_etud.id_user
+            JOIN utilisateur u_entr ON s.id_entreprise = u_entr.id_user
+            ORDER BY c.id_convention DESC
+        ");
+    } else {
+        $queryConventions = $pdo->prepare("
+            SELECT c.id_convention,
+                   c.fichier_pdf,
+                   c.id_stage,
+                   u_etud.nom_complet AS nom_etudiant,
+                   u_entr.nom_complet AS nom_entreprise,
+                   s.date_debut,
+                   s.date_fin
+            FROM convention c
+            JOIN stage s ON c.id_stage = s.id_stage
+            JOIN etudiant etud ON s.id_etudiant = etud.id_user
+            JOIN utilisateur u_etud ON s.id_etudiant = u_etud.id_user
+            JOIN utilisateur u_entr ON s.id_entreprise = u_entr.id_user
+            WHERE etud.id_enseignant = ?
+            ORDER BY c.id_convention DESC
+        ");
+        $queryConventions->execute([$user_id]);
     }
+    $conventions = $queryConventions->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $conventions = [];
 }
 ?>
 <!DOCTYPE html>
@@ -461,7 +518,7 @@ try {
         <?php endif; ?>
         <a href="validStage.php" class="nav-link active"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
         <?php if ($user_role === 'admin'): ?>
-            <a href="Config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
+            <a href="config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
         <?php endif; ?>
         <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
             <i class="fa-solid fa-right-from-bracket"></i>
@@ -609,47 +666,69 @@ try {
                     <h5 class="fw-700 mb-0"><i class="fa-solid fa-folder-open me-2 text-warning"></i> Documents Déposés</h5>
                     <ul class="nav nav-pills nav-pills-admin ms-sm-auto" id="docTabs" role="tablist">
                         <li class="nav-item">
-                            <button class="nav-link active" id="tab-conv-btn" data-bs-toggle="pill" data-bs-target="#tab-conv" type="button" role="tab">Conventions</button>
+                            <button class="nav-link active" id="tab-doc-btn" data-bs-toggle="pill" data-bs-target="#tab-doc" type="button" role="tab">Documents</button>
                         </li>
                         <li class="nav-item">
                             <button class="nav-link" id="tab-rap-btn" data-bs-toggle="pill" data-bs-target="#tab-rap" type="button" role="tab">Rapports</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" id="tab-conv-btn" data-bs-toggle="pill" data-bs-target="#tab-conv" type="button" role="tab">Conventions</button>
                         </li>
                     </ul>
                 </div>
 
                 <div class="tab-content" id="docTabsContent">
                     
-                    <div class="tab-pane fade show active" id="tab-conv" role="tabpanel">
+                    <div class="tab-pane fade show active" id="tab-doc" role="tabpanel">
                         <div class="table-responsive">
                             <table class="table">
                                 <thead>
                                     <tr>
                                         <th>Étudiant</th>
-                                        <th class="text-end">Fichier</th>
+                                        <th>Type</th>
+                                        <th class="text-end">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php if (count($conventions) > 0): ?>
-                                        <?php foreach ($conventions as $conv): ?>
+                                    <?php if (count($documents) > 0): ?>
+                                        <?php foreach ($documents as $doc): ?>
                                             <tr>
                                                 <td>
-                                                    <div class="fw-bold"><?php echo htmlspecialchars($conv['nom_etudiant']); ?></div>
+                                                    <div class="fw-bold"><?php echo htmlspecialchars($doc['nom_etudiant']); ?></div>
                                                     <div class="small text-muted">
-                                                        Signée le <?php echo $conv['date_signature'] ? date('d/m/Y', strtotime($conv['date_signature'])) : 'N/A'; ?>
+                                                        Déposé le <?php echo $doc['date_upload'] ? date('d/m/Y', strtotime($doc['date_upload'])) : 'N/A'; ?>
                                                     </div>
                                                 </td>
+                                                <td>
+                                                    <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill">
+                                                        <?php echo htmlspecialchars(str_replace('_', ' ', $doc['type_document'])); ?>
+                                                    </span>
+                                                </td>
                                                 <td class="text-end">
-                                                    <a href="../uploads/conventions/<?php echo urlencode($conv['convention_fichier']); ?>" 
-                                                       target="_blank" 
-                                                       class="action-btn btn-view-orange">
+                                                    <a href="../uploads/documents/<?php echo urlencode($doc['chemin_fichier']); ?>"
+                                                       target="_blank"
+                                                       class="action-btn btn-view-orange me-2">
                                                         <i class="fa fa-eye"></i> Consulter
                                                     </a>
+                                                    <?php if (!empty($doc['id_stage'])): ?>
+                                                        <a href="generate_convention.php?id_stage=<?php echo (int) $doc['id_stage']; ?>&id_candidature=<?php echo (int) $doc['id_candidature']; ?>"
+                                                           target="_blank"
+                                                           class="action-btn btn-validate">
+                                                            <i class="fa fa-file-signature"></i> Générer la convention
+                                                        </a>
+                                                    <?php else: ?>
+                                                        <a href="generate_convention.php?id_candidature=<?php echo (int) $doc['id_candidature']; ?>"
+                                                           target="_blank"
+                                                           class="action-btn btn-validate">
+                                                            <i class="fa fa-file-signature"></i> Générer la convention
+                                                        </a>
+                                                    <?php endif; ?>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php else: ?>
                                         <tr>
-                                            <td colspan="2" class="text-center text-muted py-4">Aucune convention déposée pour le moment.</td>
+                                            <td colspan="3" class="text-center text-muted py-4">Aucun document déposé pour le moment.</td>
                                         </tr>
                                     <?php endif; ?>
                                 </tbody>
@@ -688,6 +767,53 @@ try {
                                     <?php else: ?>
                                         <tr>
                                             <td colspan="2" class="text-center text-muted py-4">Aucun rapport déposé pour le moment.</td>
+                                        </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-conv" role="tabpanel">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Étudiant</th>
+                                        <th>Entreprise</th>
+                                        <th class="text-end">Fichier</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (count($conventions) > 0): ?>
+                                        <?php foreach ($conventions as $convention): ?>
+                                            <tr>
+                                                <td>
+                                                    <div class="fw-bold"><?php echo htmlspecialchars($convention['nom_etudiant']); ?></div>
+                                                    <div class="small text-muted">
+                                                        Période :
+                                                        <?php echo $convention['date_debut'] ? date('d/m/Y', strtotime($convention['date_debut'])) : 'N/A'; ?>
+                                                        →
+                                                        <?php echo $convention['date_fin'] ? date('d/m/Y', strtotime($convention['date_fin'])) : 'N/A'; ?>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill">
+                                                        <?php echo htmlspecialchars($convention['nom_entreprise']); ?>
+                                                    </span>
+                                                </td>
+                                                <td class="text-end">
+                                                    <a href="../uploads/conventions/<?php echo urlencode($convention['fichier_pdf']); ?>"
+                                                       target="_blank"
+                                                       class="action-btn btn-view">
+                                                        <i class="fa fa-eye"></i> Consulter
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <tr>
+                                            <td colspan="3" class="text-center text-muted py-4">Aucune convention générée pour le moment.</td>
                                         </tr>
                                     <?php endif; ?>
                                 </tbody>

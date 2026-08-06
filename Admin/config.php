@@ -3,7 +3,7 @@
 session_start();
 
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header("Location: ../Auth/connexion.php");
     exit();
 }
 
@@ -22,13 +22,7 @@ if (empty($_SESSION['csrf_token'])) {
 // ============================================================
 // 1. CONNEXION À LA BASE DE DONNÉES (PORT 3307)
 // ============================================================
-try {
-    $pdo = new PDO("mysql:host=localhost;port=3307;dbname=gestion_stages;charset=utf8mb4", "root", "");
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-} catch (PDOException $e) {
-    die("Erreur de connexion : " . $e->getMessage());
-}
-
+include('../Auth/config_db.php');
 $message = "";
 $messageType = "";
 
@@ -327,7 +321,7 @@ try {
         <a href="dash.php" class="nav-link"><i class="fa-solid fa-chart-pie"></i> Dashboard</a>
         <a href="gestUtil.php" class="nav-link"><i class="fa-solid fa-users-gears"></i> Utilisateurs</a>
         <a href="validStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
-        <a href="Config.php" class="nav-link active"><i class="fa-solid fa-gears"></i> Configurations</a>
+        <a href="config.php" class="nav-link active"><i class="fa-solid fa-gears"></i> Configurations</a>
         <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
             <i class="fa-solid fa-right-from-bracket"></i>
             <span>Déconnexion</span>
@@ -369,7 +363,7 @@ try {
             </h5>
         </div>
 
-        <form action="Config.php" method="POST">
+        <form action="config.php" method="POST">
             <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
 
             <div class="row g-4">

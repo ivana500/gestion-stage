@@ -23,43 +23,62 @@ function resolveFilePath($raw, $defaultFolder) {
 }
 
 // ============================================================
-// NOTIFICATIONS NON LUES : uniquement "convention disponible"
-// (les dépôts de documents/rapport concernent l'entreprise et l'admin,
-// pas l'étudiant lui-même)
+// NOTIFICATIONS (toutes, avec état lu/non lu)
 // ============================================================
-$stmtNotifs = $pdo->prepare("SELECT id, type, message, lu, date_creation, id_stage
-                              FROM notifications
-                              WHERE id_user = ? AND lu = 0 AND type = 'convention_disponible'
-                              ORDER BY date_creation DESC");
+$stmtNotifs = $pdo->prepare("
+    SELECT id, type, message, lu, date_creation, id_stage
+    FROM notifications
+    WHERE id_user = ? AND type = 'convention_disponible'
+    ORDER BY date_creation DESC
+");
 $stmtNotifs->execute([$id_etudiant]);
 $notifications_brutes = $stmtNotifs->fetchAll(PDO::FETCH_ASSOC);
 
 $notifications = [];
+$nb_notifs = 0; // compteur uniquement des notifications NON lues
+
 foreach ($notifications_brutes as $n) {
     if (!$n['id_stage']) continue;
 
     // Sécurité : le stage doit bien appartenir à cet étudiant
-    $stmtCheck = $pdo->prepare("SELECT s.id_stage FROM STAGE s WHERE s.id_stage = ? AND s.id_etudiant = ?");
+    $stmtCheck = $pdo->prepare("
+        SELECT s.id_stage
+        FROM STAGE s
+        WHERE s.id_stage = ? AND s.id_etudiant = ?
+    ");
     $stmtCheck->execute([$n['id_stage'], $id_etudiant]);
     if (!$stmtCheck->fetch()) continue;
 
-    $stmtConv = $pdo->prepare("SELECT fichier_pdf FROM convention WHERE id_stage = ? ORDER BY id_convention DESC LIMIT 1");
+    $stmtConv = $pdo->prepare("
+        SELECT fichier_pdf
+        FROM convention
+        WHERE id_stage = ?
+        ORDER BY id_convention DESC
+        LIMIT 1
+    ");
     $stmtConv->execute([$n['id_stage']]);
     $conv = $stmtConv->fetch(PDO::FETCH_ASSOC);
 
     $fichiers = [];
     if ($conv) {
-        $fichiers[] = ['label' => 'Convention de stage', 'url' => resolveFilePath($conv['fichier_pdf'], '../uploads/conventions/')];
+        $fichiers[] = [
+            'label' => 'Convention de stage',
+            'url' => resolveFilePath($conv['fichier_pdf'], '../uploads/conventions/')
+        ];
+    }
+
+    if ((int)$n['lu'] === 0) {
+        $nb_notifs++;
     }
 
     $notifications[] = [
-        'id' => $n['id'],
+        'id' => (int)$n['id'],
         'texte' => 'Votre convention de stage est disponible',
         'date' => $n['date_creation'],
         'fichiers' => $fichiers,
+        'lu' => (int)$n['lu'],
     ];
 }
-$nb_notifs = count($notifications);
 
 // 2. Récupération utilisateur
 $stmt_user = $pdo->prepare("SELECT nom_complet FROM UTILISATEUR WHERE id_user = ?");
@@ -260,6 +279,19 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
             border-bottom: 1px solid rgba(255,255,255,0.04);
             background: rgba(16,185,129,0.08);
         }
+        .notif-item.notif-read {
+            background: rgba(15, 23, 42, 0.75);
+            opacity: 0.8;
+        }
+        .notif-item.notif-read:hover {
+            background: rgba(15, 23, 42, 0.9);
+        }
+        .notif-item.notif-read .texte {
+            color: #cbd5e1;
+        }
+        .notif-item.notif-read .date {
+            color: #64748b;
+        }
         .notif-item:hover { background: rgba(16,185,129,0.16); }
         .notif-item .texte { font-weight: 600; font-size: 0.85rem; }
         .notif-item .date { color: #5b5f70; font-size: 0.7rem; margin-top: 6px; }
@@ -350,9 +382,9 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
             <div class="notif-bell-wrap">
                 <button class="notif-bell-btn" onclick="toggleNotifPanel()" type="button">
                     <i class="fa-solid fa-bell"></i>
-                    <?php if ($nb_notifs > 0): ?>
-                        <span class="notif-badge"><?= $nb_notifs > 9 ? '9+' : $nb_notifs ?></span>
-                    <?php endif; ?>
+                    <span id="notifBadge" class="notif-badge" style="display: <?= $nb_notifs > 0 ? 'flex' : 'none' ?>;">
+                        <?= $nb_notifs > 9 ? '9+' : $nb_notifs ?>
+                    </span>
                 </button>
                 <div id="notifPanel" class="notif-panel">
                     <div class="notif-panel-header">
@@ -364,7 +396,7 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
                     <?php if (empty($notifications)): ?>
                         <div class="notif-empty">Aucune notification pour le moment.</div>
                     <?php else: foreach ($notifications as $n): ?>
-                        <div class="notif-item" onclick="showDoc(<?= (int)$n['id'] ?>)">
+                        <div class="notif-item <?= (int)$n['lu'] === 1 ? 'notif-read' : '' ?>" onclick="showDoc(<?= (int)$n['id'] ?>)">
                             <div class="texte"><?= htmlspecialchars($n['texte']) ?></div>
                             <div class="date"><?= date('d/m/Y à H:i', strtotime($n['date'])) ?></div>
                         </div>
@@ -519,6 +551,21 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+    let unreadNotifCount = <?= (int)$nb_notifs ?>;
+
+    function updateNotifBadge() {
+        const badge = document.getElementById('notifBadge');
+        if (!badge) return;
+
+        if (unreadNotifCount > 0) {
+            badge.textContent = unreadNotifCount > 9 ? '9+' : unreadNotifCount;
+            badge.style.display = 'flex';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
+    }
+
     function toggleNotifPanel() {
         const panel = document.getElementById('notifPanel');
         panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
@@ -534,7 +581,15 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
             view.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        fetch('marquer_notif_lue.php?id=' + notifId).catch(() => {});
+        fetch('marquer_notif_lue.php?id=' + notifId)
+            .then(response => response.json())
+            .then(data => {
+                if (data && typeof data.remaining_unread !== 'undefined') {
+                    unreadNotifCount = Number(data.remaining_unread) || 0;
+                    updateNotifBadge();
+                }
+            })
+            .catch(() => {});
     }
 
     function backToNotifs() {
@@ -548,6 +603,8 @@ $dernieres_candidatures = $stmt_liste->fetchAll(PDO::FETCH_ASSOC);
             document.getElementById('notifPanel').style.display = 'none';
         }
     });
+
+    updateNotifBadge();
 </script>
 
 </body>

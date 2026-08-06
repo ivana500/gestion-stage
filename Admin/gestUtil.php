@@ -317,7 +317,7 @@ $utilisateurs = $queryUsers->fetchAll(PDO::FETCH_ASSOC);
         <a href="dash.php" class="nav-link"><i class="fa-solid fa-chart-pie"></i> Dashboard</a>
         <a href="gestUtil.php" class="nav-link active"><i class="fa-solid fa-users-gears"></i> Utilisateurs</a>
         <a href="validStage.php" class="nav-link"><i class="fa-solid fa-briefcase"></i> Toutes les offres</a>
-        <a href="Config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
+        <a href="config.php" class="nav-link"><i class="fa-solid fa-gears"></i> Configurations</a>
         <a href="../Auth/deconnexion.php" class="nav-link text-danger" onclick="return confirm('Voulez-vous vraiment vous déconnecter ?')">
             <i class="fa-solid fa-right-from-bracket"></i>
             <span>Déconnexion</span>

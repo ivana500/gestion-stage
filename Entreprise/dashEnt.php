@@ -11,9 +11,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entreprise') {
 $id_ent = $_SESSION['user_id'];
 
 // Petit helper : reconstruit un chemin utilisable vers un fichier stocké en base.
-// Hypothèse : si la valeur contient déjà un "/", elle est stockée relative à la racine du projet.
-// Sinon, c'est juste un nom de fichier -> on le complète avec le dossier par défaut.
-// ⚠️ À vérifier/ajuster selon ce que ton script d'upload écrit réellement en base.
+
 function resolveFilePath($raw, $defaultFolder) {
     if (empty($raw)) return null;
     if (strpos($raw, '/') !== false) {
@@ -50,34 +48,37 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute([$id_ent]);
 $dernieres_candidatures = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// --- 3. NOTIFICATIONS NON LUES (documents de candidature OU rapport) ---
-// AVANT : la requête joignait n.id_user (= id de l'entreprise) à c.id_etudiant,
-// ce qui ne pouvait jamais matcher correctement. On utilise maintenant les
-// colonnes id_candidature / id_stage ajoutées par la migration.
-$stmtNotifs = $pdo->prepare("SELECT id, type, message, lu, date_creation, id_candidature, id_stage
-                              FROM notifications
-                              WHERE id_user = ? AND lu = 0
-                              ORDER BY date_creation DESC");
+
+// --- 3. NOTIFICATIONS (toutes, avec état lu/non lu) ---
+$stmtNotifs = $pdo->prepare("
+    SELECT id, type, message, lu, date_creation, id_candidature, id_stage
+    FROM notifications
+    WHERE id_user = ?
+    ORDER BY date_creation DESC
+");
 $stmtNotifs->execute([$id_ent]);
 $notifications_brutes = $stmtNotifs->fetchAll(PDO::FETCH_ASSOC);
 
 $notifications = [];
-foreach ($notifications_brutes as $n) {
+$nb_notifs = 0; // compteur uniquement des notifications NON lues
 
+foreach ($notifications_brutes as $n) {
     if ($n['type'] === 'documents_candidature' && $n['id_candidature']) {
-        // Sécurité : la candidature doit viser une offre de CETTE entreprise
-        $stmtCheck = $pdo->prepare("SELECT u.nom_complet
-                                     FROM CANDIDATURE c
-                                     JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
-                                     JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
-                                     WHERE c.id_candidature = ? AND o.id_entreprise = ?");
+        $stmtCheck = $pdo->prepare("
+            SELECT u.nom_complet
+            FROM CANDIDATURE c
+            JOIN OFFRE_STAGE o ON c.id_offre = o.id_offre
+            JOIN UTILISATEUR u ON c.id_etudiant = u.id_user
+            WHERE c.id_candidature = ? AND o.id_entreprise = ?
+        ");
         $stmtCheck->execute([$n['id_candidature'], $id_ent]);
         $info = $stmtCheck->fetch(PDO::FETCH_ASSOC);
-        if (!$info) continue; // pas la bonne entreprise -> on ignore par sécurité
+        if (!$info) continue;
 
         $stmtDocs = $pdo->prepare("SELECT type_document, chemin_fichier FROM documents_stage WHERE id_candidature = ?");
         $stmtDocs->execute([$n['id_candidature']]);
         $fichiers = [];
+
         foreach ($stmtDocs->fetchAll(PDO::FETCH_ASSOC) as $d) {
             $label = match (strtolower($d['type_document'])) {
                 'cv' => 'CV',
@@ -85,23 +86,33 @@ foreach ($notifications_brutes as $n) {
                 'cv_lettre' => 'CV + Lettre de motivation',
                 default => ucfirst($d['type_document']),
             };
-            $fichiers[] = ['label' => $label, 'url' => resolveFilePath($d['chemin_fichier'], '../uploads/documents/')];
+
+            $fichiers[] = [
+                'label' => $label,
+                'url' => resolveFilePath($d['chemin_fichier'], '../uploads/documents/')
+            ];
+        }
+
+        if ((int)$n['lu'] === 0) {
+            $nb_notifs++;
         }
 
         $notifications[] = [
-            'id' => $n['id'],
+            'id' => (int)$n['id'],
             'nom_etudiant' => $info['nom_complet'],
             'texte' => 'a déjà envoyé sa lettre de motivation et son CV',
             'date' => $n['date_creation'],
             'fichiers' => $fichiers,
+            'lu' => (int)$n['lu'],
         ];
 
     } elseif ($n['type'] === 'rapport' && $n['id_stage']) {
-        // Sécurité : le stage doit bien être rattaché à CETTE entreprise
-        $stmtCheck = $pdo->prepare("SELECT u.nom_complet
-                                     FROM STAGE s
-                                     JOIN UTILISATEUR u ON s.id_etudiant = u.id_user
-                                     WHERE s.id_stage = ? AND s.id_entreprise = ?");
+        $stmtCheck = $pdo->prepare("
+            SELECT u.nom_complet
+            FROM STAGE s
+            JOIN UTILISATEUR u ON s.id_etudiant = u.id_user
+            WHERE s.id_stage = ? AND s.id_entreprise = ?
+        ");
         $stmtCheck->execute([$n['id_stage'], $id_ent]);
         $info = $stmtCheck->fetch(PDO::FETCH_ASSOC);
         if (!$info) continue;
@@ -112,22 +123,29 @@ foreach ($notifications_brutes as $n) {
 
         $fichiers = [];
         if ($rap) {
-            $fichiers[] = ['label' => 'Rapport de stage', 'url' => resolveFilePath($rap['fichier_pdf'], '../uploads/rapports/')];
+            $fichiers[] = [
+                'label' => 'Rapport de stage',
+                'url' => resolveFilePath($rap['fichier_pdf'], '../uploads/rapports/')
+            ];
+        }
+
+        if ((int)$n['lu'] === 0) {
+            $nb_notifs++;
         }
 
         $notifications[] = [
-            'id' => $n['id'],
+            'id' => (int)$n['id'],
             'nom_etudiant' => $info['nom_complet'],
             'texte' => 'a déjà envoyé son rapport de stage',
             'date' => $n['date_creation'],
             'fichiers' => $fichiers,
+            'lu' => (int)$n['lu'],
         ];
     }
-    // types inconnus : ignorés par sécurité
 }
-$nb_notifs = count($notifications);
-?>
 
+
+?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -140,6 +158,113 @@ $nb_notifs = count($notifications);
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
+        /* ---- NOTIFICATIONS ---- */
+.notif-bell-wrap { position: relative; }
+.notif-bell-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--card-dark);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+}
+.notif-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #ef4444;
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.notif-panel {
+    display: none;
+    position: absolute;
+    top: 60px;
+    right: 0;
+    width: 380px;
+    max-height: 460px;
+    overflow-y: auto;
+    background: var(--card-dark);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+    z-index: 1000;
+    padding: 0;
+}
+.notif-panel-header {
+    padding: 16px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.notif-panel-header h5 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+.notif-item {
+    display: block;
+    padding: 14px 18px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    background: rgba(59,130,246,0.06);
+}
+.notif-item:hover {
+    background: rgba(59,130,246,0.14);
+}
+.notif-item .nom {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+.notif-item .texte {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 2px;
+}
+.notif-item .date {
+    color: #5b5f70;
+    font-size: 0.7rem;
+    margin-top: 6px;
+}
+.notif-empty {
+    padding: 30px 18px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+.notif-item.notif-read {
+    background: rgba(255, 255, 255, 0.05);
+    opacity: 0.72;
+}
+.notif-item.notif-read .nom {
+    color: #a5acbc;
+}
+.notif-item.notif-read .texte {
+    color: #798095;
+}
+.notif-read-badge {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #aeb4c7;
+    font-size: 0.65rem;
+    font-weight: 700;
+}
         :root {
             --bg-dark: #1a1d2d;
             --sidebar-dark: #111422;
@@ -269,33 +394,60 @@ $nb_notifs = count($notifications);
         /* ---- NOTIFICATIONS ---- */
         .notif-bell-wrap { position: relative; }
         .notif-bell-btn {
-            width: 46px; height: 46px; border-radius: 50%;
-            background: var(--card-dark); border: 1px solid rgba(255,255,255,0.08);
-            color: white; display: flex; align-items: center; justify-content: center;
-            cursor: pointer; position: relative;
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            background: var(--card-dark);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
         }
         .notif-badge {
-            position: absolute; top: -4px; right: -4px;
-            background: #ef4444; color: white; font-size: 0.65rem; font-weight: 700;
-            border-radius: 50%; width: 20px; height: 20px;
-            display: flex; align-items: center; justify-content: center;
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            background: #ef4444;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 700;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .notif-panel {
             display: none;
-            position: absolute; top: 60px; right: 0;
-            width: 380px; max-height: 460px; overflow-y: auto;
-            background: var(--card-dark); border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 14px; box-shadow: 0 15px 40px rgba(0,0,0,0.5);
-            z-index: 1000; padding: 0;
+            position: absolute;
+            top: 60px;
+            right: 0;
+            width: 380px;
+            max-height: 460px;
+            overflow-y: auto;
+            background: var(--card-dark);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+            z-index: 1000;
+            padding: 0;
         }
         .notif-panel-header {
-            padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
-            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .notif-panel-header h5 { margin: 0; font-size: 0.95rem; font-weight: 700; }
         .notif-item {
-            display: block; padding: 14px 18px; cursor: pointer;
+            display: block;
+            padding: 14px 18px;
+            cursor: pointer;
             border-bottom: 1px solid rgba(255,255,255,0.04);
             background: rgba(59,130,246,0.06);
         }
@@ -315,28 +467,45 @@ $nb_notifs = count($notifications);
             margin-bottom: 30px;
         }
         .doc-view-header {
-            display: flex; align-items: center; justify-content: space-between;
-            margin-bottom: 20px; padding-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
             border-bottom: 1px solid rgba(255,255,255,0.06);
         }
         .doc-view-header h4 { margin: 0; font-size: 1.1rem; }
         .btn-back {
-            background: transparent; border: 1px solid rgba(255,255,255,0.15);
-            color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
             font-size: 0.85rem;
         }
         .btn-back:hover { background: rgba(255,255,255,0.05); }
 
         .doc-file-block { margin-bottom: 22px; }
         .doc-file-block .doc-label {
-            font-weight: 600; font-size: 0.85rem; margin-bottom: 8px;
-            display: flex; align-items: center; justify-content: space-between;
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
         .doc-file-block iframe {
-            width: 100%; height: 420px; border: none; border-radius: 10px; background: white;
+            width: 100%;
+            height: 420px;
+            border: none;
+            border-radius: 10px;
+            background: white;
         }
         .doc-file-block a.doc-download {
-            color: var(--accent-blue); font-size: 0.78rem; text-decoration: none;
+            color: var(--accent-blue);
+            font-size: 0.78rem;
+            text-decoration: none;
         }
         .pointer { cursor: pointer; }
     </style>
@@ -382,12 +551,11 @@ $nb_notifs = count($notifications);
             <div class="notif-bell-wrap">
                 <button class="notif-bell-btn" onclick="toggleNotifPanel()" type="button">
                     <i class="fa-solid fa-bell"></i>
-                    <?php if ($nb_notifs > 0): ?>
-                        <span class="notif-badge"><?= $nb_notifs > 9 ? '9+' : $nb_notifs ?></span>
-                    <?php endif; ?>
+                    <span id="notifBadge" class="notif-badge" style="display: <?= $nb_notifs > 0 ? 'flex' : 'none' ?>;">
+                        <?= $nb_notifs > 9 ? '9+' : $nb_notifs ?>
+                    </span>
                 </button>
 
-                <!-- PANNEAU NOTIFICATIONS -->
                 <div id="notifPanel" class="notif-panel">
                     <div class="notif-panel-header">
                         <h5>Notifications</h5>
@@ -395,15 +563,25 @@ $nb_notifs = count($notifications);
                             <i class="fa-solid fa-xmark"></i>
                         </button>
                     </div>
+
                     <?php if (empty($notifications)): ?>
                         <div class="notif-empty">Aucune notification pour le moment.</div>
-                    <?php else: foreach ($notifications as $n): ?>
-                        <div class="notif-item" onclick="showDoc(<?= (int)$n['id'] ?>)">
-                            <div class="nom"><?= htmlspecialchars($n['nom_etudiant']) ?></div>
-                            <div class="texte">L'étudiant <?= htmlspecialchars($n['texte']) ?></div>
-                            <div class="date"><?= date('d/m/Y à H:i', strtotime($n['date'])) ?></div>
-                        </div>
-                    <?php endforeach; endif; ?>
+                    <?php else: ?>
+                        <?php foreach ($notifications as $n): ?>
+                            <div
+                                class="notif-item <?= $n['lu'] ? 'notif-read' : 'notif-unread' ?>"
+                                data-notif-id="<?= (int)$n['id'] ?>"
+                                onclick="showDoc(<?= (int)$n['id'] ?>)"
+                            >
+                                <div class="nom"><?= htmlspecialchars($n['nom_etudiant']) ?></div>
+                                <div class="texte">L'étudiant <?= htmlspecialchars($n['texte']) ?></div>
+                                <?php if ($n['lu']): ?>
+                                    <span class="notif-read-badge">Lue</span>
+                                <?php endif; ?>
+                                <div class="date"><?= date('d/m/Y à H:i', strtotime($n['date'])) ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -534,13 +712,46 @@ $nb_notifs = count($notifications);
 </div>
 
 <script>
+    let unreadNotifCount = <?= (int)$nb_notifs ?>;
+
+    function updateBellBadge() {
+        const badge = document.getElementById('notifBadge');
+        if (!badge) return;
+
+        if (unreadNotifCount > 0) {
+            badge.textContent = unreadNotifCount > 9 ? '9+' : unreadNotifCount;
+            badge.style.display = 'flex';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
+    }
+
+    function markNotifAsRead(notifId) {
+        const item = document.querySelector('.notif-item[data-notif-id="' + notifId + '"]');
+        if (!item) return;
+
+        item.classList.remove('notif-unread');
+        item.classList.add('notif-read');
+
+        const existingBadge = item.querySelector('.notif-read-badge');
+        if (!existingBadge) {
+            const badge = document.createElement('span');
+            badge.className = 'notif-read-badge';
+            badge.textContent = 'Lue';
+            item.insertBefore(badge, item.querySelector('.date'));
+        }
+
+        unreadNotifCount = Math.max(0, unreadNotifCount - 1);
+        updateBellBadge();
+    }
+
     function toggleNotifPanel() {
         const panel = document.getElementById('notifPanel');
         panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
     }
 
     function showDoc(notifId) {
-        // On cache le panneau de notifications ET tous les autres docs déjà ouverts
         document.getElementById('notifPanel').style.display = 'none';
         document.querySelectorAll('.doc-view').forEach(el => el.style.display = 'none');
 
@@ -550,8 +761,15 @@ $nb_notifs = count($notifications);
             view.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        // Marque la notification comme lue en arrière-plan, sans quitter la page
-        fetch('marquer_notif_lue.php?id=' + notifId).catch(() => {});
+        fetch('marquer_notif_lue.php?id=' + notifId)
+            .then(response => response.json())
+            .then(data => {
+                if (data && typeof data.remaining_unread !== 'undefined') {
+                    unreadNotifCount = Number(data.remaining_unread) || 0;
+                    updateBellBadge();
+                }
+            })
+            .catch(() => {});
     }
 
     function backToNotifs() {
@@ -559,13 +777,14 @@ $nb_notifs = count($notifications);
         document.getElementById('notifPanel').style.display = 'block';
     }
 
-    // Ferme le panneau si on clique en dehors
     document.addEventListener('click', function (e) {
         const wrap = document.querySelector('.notif-bell-wrap');
         if (wrap && !wrap.contains(e.target)) {
             document.getElementById('notifPanel').style.display = 'none';
         }
     });
+
+    updateBellBadge();
 </script>
 
 </body>
