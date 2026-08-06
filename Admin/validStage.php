@@ -5,13 +5,13 @@ session_start();
 // 1. VÉRIFICATION DES ACCÈS & RÔLES
 // ============================================================
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header("Location: ../Auth/connexion.php");
     exit();
 }
 
 // Seuls l'admin principal et le sous_admin (enseignant) peuvent voir cette page
 if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'sous_admin') {
-    header("Location: login.php");
+    header("Location: ../Auth/connexion.php");
     exit();
 }
 

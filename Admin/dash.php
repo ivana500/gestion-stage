@@ -3,13 +3,13 @@ session_start();
 
 // 1. Vérifier la connexion et l'existence des variables de session
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['user_role'])) {
-    header("Location: login.php");
+    header("Location: ../Auth/connexion.php");
     exit();
 }
 
 // 2. Vérifier si l'utilisateur a le droit d'être ici (admin)
 if ($_SESSION['user_role'] !== 'admin') {
-    header("Location: login.php");
+    header("Location: ../Auth/connexion.php");
     exit();
 }
 

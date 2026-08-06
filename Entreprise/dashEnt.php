@@ -528,7 +528,7 @@ foreach ($notifications_brutes as $n) {
     <nav>
         <a href="dashEnt.php" class="nav-link active"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
         <a href="pubOffre.php" class="nav-link "><i class="fa-solid fa-plus-circle"></i> Publier une offre</a>
-        <a href="OffrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
+        <a href="offrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
         <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">

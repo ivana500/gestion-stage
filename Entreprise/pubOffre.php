@@ -30,7 +30,7 @@ if (isset($_POST['ajouter_offre'])) {
             $stmt->execute([$titre, $lieu, $type_stage, $duree, $date_limite, $description, $statut, $id_ent]);
             
             // Redirection vers la liste des offres après succès
-            header('Location: OffrePub.php');
+            header('Location: offrePub.php');
             exit();
         } catch (PDOException $e) {
             $message = "Une erreur est survenue lors de l'ajout de l'offre : " . $e->getMessage();
@@ -208,7 +208,7 @@ if (isset($_POST['ajouter_offre'])) {
     <nav>
         <a href="dashEnt.php" class="nav-link"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
         <a href="pubOffre.php" class="nav-link active"><i class="fa-solid fa-plus-circle"></i> Publier une offre</a>
-        <a href="OffrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
+        <a href="offrePub.php" class="nav-link"><i class="fa-solid fa-list-check"></i> Mes offres</a>
         <a href="gestCand.php" class="nav-link"><i class="fa-solid fa-users-rectangle"></i> Candidatures</a>
         <hr class="mx-3" style="border-color: rgba(255,255,255,0.1);">
         <a href="paramEnt.php" class="nav-link"><i class="fa-solid fa-gear"></i> Paramètres</a>

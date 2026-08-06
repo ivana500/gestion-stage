@@ -284,7 +284,7 @@ $candidatures = $stmt_list->fetchAll();
                         </div>
 
                         <button class="btn-view" 
-        onclick="afficherDetails(<?= htmlspecialchars(json_encode($cand)) ?>)">
+        onclick='afficherDetails(<?= json_encode($cand, JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>
     <i class="fa-solid fa-eye me-2"></i>Détails
 </button>
                     </div>
